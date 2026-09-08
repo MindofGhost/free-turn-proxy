@@ -26,6 +26,12 @@ type Provider interface {
 	Name() string
 }
 
+// CredentialRefresher is an optional provider capability for warming short-lived
+// credentials without touching currently active TURN allocations.
+type CredentialRefresher interface {
+	RefreshExpiringCredentials(ctx context.Context, streamID int, within time.Duration) error
+}
+
 var (
 	ErrBackoffActive  = errors.New("provider backoff active")
 	ErrFatalNoStreams = errors.New("provider fatal: no streams alive")

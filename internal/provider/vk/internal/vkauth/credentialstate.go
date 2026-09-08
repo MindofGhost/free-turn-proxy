@@ -34,7 +34,7 @@ func (s credentialsStore) load(cacheID int, link string, now time.Time) (TurnCre
 		if !ok {
 			continue
 		}
-		creds, ok := st.Entries[cacheKey(cacheID)]
+		creds, ok := st.Entries[cacheKey(cacheID, link)]
 		if ok && creds.Link == link && creds.ExpiresAt.After(now) && len(creds.ServerAddrs) > 0 {
 			return creds, true
 		}
@@ -50,11 +50,11 @@ func (s credentialsStore) save(cacheID int, creds TurnCredentials) bool {
 	defer credMu.Unlock()
 
 	st := s.read()
-	st.Entries[cacheKey(cacheID)] = creds
+	st.Entries[cacheKey(cacheID, creds.Link)] = creds
 	return s.write(st)
 }
 
-func (s credentialsStore) drop(cacheID int) bool {
+func (s credentialsStore) drop(cacheID int, link string) bool {
 	if len(s.paths) == 0 {
 		return false
 	}
@@ -62,7 +62,7 @@ func (s credentialsStore) drop(cacheID int) bool {
 	defer credMu.Unlock()
 
 	st := s.read()
-	key := cacheKey(cacheID)
+	key := cacheKey(cacheID, link)
 	if _, ok := st.Entries[key]; !ok {
 		return false
 	}
@@ -98,6 +98,6 @@ func (s credentialsStore) write(st credentialsState) bool {
 	return statedir.WriteFirst(s.paths, b)
 }
 
-func cacheKey(cacheID int) string {
-	return strconv.Itoa(cacheID)
+func cacheKey(cacheID int, link string) string {
+	return strconv.Itoa(cacheID) + ":" + link
 }

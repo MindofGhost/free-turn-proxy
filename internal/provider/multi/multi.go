@@ -4,6 +4,7 @@ package multi
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/samosvalishe/free-turn-proxy/internal/provider"
 )
@@ -34,6 +35,15 @@ func (m *Provider) GetCredentials(ctx context.Context, streamID int) (provider.C
 
 func (m *Provider) IsAuthError(err error) bool {
 	return m.providers[0].IsAuthError(err)
+}
+
+func (m *Provider) RefreshExpiringCredentials(ctx context.Context, streamID int, within time.Duration) error {
+	p, innerID := m.providerFor(streamID)
+	r, ok := p.(provider.CredentialRefresher)
+	if !ok {
+		return nil
+	}
+	return r.RefreshExpiringCredentials(ctx, innerID, within)
 }
 
 func (m *Provider) HandleAuthError(streamID int) bool {

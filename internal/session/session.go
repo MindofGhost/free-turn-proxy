@@ -55,6 +55,10 @@ const (
 	// Окно проверки живости после пробуждения: рецикл - только если за него не пришло
 	// ни байта. Больше периода keepalive туннеля (25 c у WireGuard по умолчанию).
 	wakeProbeWindow = 30 * time.Second
+
+	credentialRefreshTick    = 1 * time.Minute
+	credentialRefreshWithin  = 2 * time.Minute
+	credentialRefreshTimeout = 45 * time.Second
 )
 
 type Options struct {
@@ -217,6 +221,7 @@ func (s *Session) Run(ctx context.Context) (err error) {
 		})
 	}))
 	bg.Go(guard(func() { s.watchWake(runCtx) }))
+	bg.Go(guard(func() { s.refreshCredentials(runCtx, prov) }))
 
 	var watchdogErr error
 	bg.Go(guard(func() {
@@ -235,6 +240,43 @@ func (s *Session) Run(ctx context.Context) (err error) {
 		return relayErr
 	}
 	return watchdogErr
+}
+
+func (s *Session) refreshCredentials(ctx context.Context, prov provider.Provider) {
+	refresher, ok := prov.(provider.CredentialRefresher)
+	if !ok {
+		return
+	}
+	tick := time.NewTicker(credentialRefreshTick)
+	defer tick.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+		if s.connected.Load() == 0 || s.captchaActive() {
+			continue
+		}
+		if until := prov.BackoffUntilUnix(); until > time.Now().Unix() {
+			continue
+		}
+		for streamID := 1; streamID <= s.total; streamID++ {
+			if ctx.Err() != nil {
+				return
+			}
+			if s.connected.Load() == 0 || s.captchaActive() {
+				break
+			}
+			refreshCtx, cancel := context.WithTimeout(ctx, credentialRefreshTimeout)
+			err := refresher.RefreshExpiringCredentials(refreshCtx, streamID, credentialRefreshWithin)
+			cancel()
+			if err != nil && ctx.Err() == nil {
+				s.deps.Logger.Warnf("[STREAM %d] credentials background refresh skipped: %v", streamID, err)
+			}
+		}
+	}
 }
 
 func (s *Session) runRelayLoop(ctx context.Context, prov provider.Provider, peer *net.UDPAddr) error {

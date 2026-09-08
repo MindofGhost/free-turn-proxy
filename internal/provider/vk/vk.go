@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"time"
 
 	"github.com/samosvalishe/free-turn-proxy/internal/logx"
 	"github.com/samosvalishe/free-turn-proxy/internal/provider"
@@ -66,14 +67,18 @@ func DefaultStatePaths() []string { return statedir.Paths(vkauth.PersonaStateFil
 func DefaultCredentialPaths() []string { return statedir.Paths(vkauth.CredentialsStateFile) }
 
 func (p *Provider) GetCredentials(ctx context.Context, streamID int) (provider.Credentials, error) {
-	user, pass, addrs, err := p.auth.GetCredentials(ctx, p.link, streamID)
+	user, pass, addrs, expiresAt, err := p.auth.GetCredentials(ctx, p.link, streamID)
 	if err != nil {
 		return provider.Credentials{}, err
 	}
-	return provider.Credentials{User: user, Pass: pass, ServerAddrs: addrs}, nil
+	return provider.Credentials{User: user, Pass: pass, ServerAddrs: addrs, ExpiresAt: expiresAt}, nil
 }
 
 func (p *Provider) IsAuthError(err error) bool { return p.auth.IsAuthError(err) }
+
+func (p *Provider) RefreshExpiringCredentials(ctx context.Context, streamID int, within time.Duration) error {
+	return p.auth.RefreshExpiringCredentials(ctx, p.link, streamID, within)
+}
 
 func (p *Provider) HandleAuthError(streamID int) bool { return p.auth.HandleAuthError(streamID) }
 

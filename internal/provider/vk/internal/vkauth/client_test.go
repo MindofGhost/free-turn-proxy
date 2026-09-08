@@ -143,7 +143,7 @@ func TestFetchFallsBackThroughCredentialsList(t *testing.T) {
 		return "user-c", "pass-c", []string{"server-c:443"}, nil
 	})
 
-	u, p, addr, err := c.GetCredentials(context.Background(), "L", 0)
+	u, p, addr, _, err := c.GetCredentials(context.Background(), "L", 0)
 	if err != nil {
 		t.Fatalf("GetCredentials: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestFetchShortCircuitsOnCaptchaWait(t *testing.T) {
 		return "", "", nil, ErrCaptchaWaitRequired
 	})
 
-	_, _, _, err := c.GetCredentials(context.Background(), "L", 0)
+	_, _, _, _, err := c.GetCredentials(context.Background(), "L", 0)
 	if err == nil || !errors.Is(err, ErrCaptchaWaitRequired) {
 		t.Fatalf("expected CAPTCHA_WAIT_REQUIRED, got %v", err)
 	}
@@ -183,11 +183,11 @@ func TestGetCredentialsCacheHit(t *testing.T) {
 	})
 
 	// First call populates the cache.
-	if _, _, _, err := c.GetCredentials(context.Background(), "L", 0); err != nil {
+	if _, _, _, _, err := c.GetCredentials(context.Background(), "L", 0); err != nil {
 		t.Fatal(err)
 	}
 	// Second call (same stream group) must hit the cache.
-	if _, _, _, err := c.GetCredentials(context.Background(), "L", 1); err != nil {
+	if _, _, _, _, err := c.GetCredentials(context.Background(), "L", 1); err != nil {
 		t.Fatal(err)
 	}
 	if calls.Load() != 1 {
@@ -195,11 +195,11 @@ func TestGetCredentialsCacheHit(t *testing.T) {
 	}
 
 	// Sibling-stream primary round-robin: stream 0 -> addr[0], stream 1 -> addr[1].
-	_, _, addr0, err := c.GetCredentials(context.Background(), "L", 0)
+	_, _, addr0, _, err := c.GetCredentials(context.Background(), "L", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, addr1, err := c.GetCredentials(context.Background(), "L", 1)
+	_, _, addr1, _, err := c.GetCredentials(context.Background(), "L", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func TestGetCredentialsUsesPersistedCache(t *testing.T) {
 	}, func(c *Client) {
 		c.creds = credentialsStore{paths: paths}
 	})
-	if _, _, _, err := first.GetCredentials(context.Background(), "L", 1); err != nil {
+	if _, _, _, _, err := first.GetCredentials(context.Background(), "L", 1); err != nil {
 		t.Fatal(err)
 	}
 
@@ -229,7 +229,7 @@ func TestGetCredentialsUsesPersistedCache(t *testing.T) {
 	}, func(c *Client) {
 		c.creds = credentialsStore{paths: paths}
 	})
-	u, p, addrs, err := restarted.GetCredentials(context.Background(), "L", 1)
+	u, p, addrs, _, err := restarted.GetCredentials(context.Background(), "L", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +245,7 @@ func TestGetCredentialsIgnoresExpiredPersistedCache(t *testing.T) {
 	t.Parallel()
 
 	paths := []string{filepath.Join(t.TempDir(), CredentialsStateFile)}
-	st := credentialsState{Entries: map[string]TurnCredentials{cacheKey(0): {
+	st := credentialsState{Entries: map[string]TurnCredentials{cacheKey(0, "L"): {
 		Username:    "old-u",
 		Password:    "old-p",
 		ServerAddrs: []string{"old:1"},
@@ -263,12 +263,65 @@ func TestGetCredentialsIgnoresExpiredPersistedCache(t *testing.T) {
 	}, func(c *Client) {
 		c.creds = credentialsStore{paths: paths}
 	})
-	u, _, _, err := c.GetCredentials(context.Background(), "L", 0)
+	u, _, _, _, err := c.GetCredentials(context.Background(), "L", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if u != "new-u" || calls.Load() != 1 {
 		t.Fatalf("expired persisted cache was not refreshed: u=%q calls=%d", u, calls.Load())
+	}
+}
+
+func TestRefreshExpiringCredentialsSkipsFreshCache(t *testing.T) {
+	t.Parallel()
+
+	c := newTestClient(t, func(_ context.Context, _ string, _ int, _ VKCredentials, _ tlsclient.CookieJar) (string, string, []string, error) {
+		t.Fatal("tokenChain must not be called while credentials are fresh")
+		return "", "", nil, nil
+	})
+	cache := c.store.Get(1)
+	cache.creds = TurnCredentials{
+		Username:    "u",
+		Password:    "p",
+		ServerAddrs: []string{"a:1"},
+		ExpiresAt:   time.Now().Add(5 * time.Minute),
+		Link:        "L",
+	}
+	if err := c.RefreshExpiringCredentials(context.Background(), "L", 1, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if cache.creds.Username != "u" {
+		t.Fatal("fresh credentials were replaced")
+	}
+}
+
+func TestRefreshExpiringCredentialsRefreshesNearExpiry(t *testing.T) {
+	t.Parallel()
+
+	paths := []string{filepath.Join(t.TempDir(), CredentialsStateFile)}
+	var calls atomic.Int32
+	c := newTestClient(t, func(_ context.Context, _ string, _ int, _ VKCredentials, _ tlsclient.CookieJar) (string, string, []string, error) {
+		calls.Add(1)
+		return "new-u", "new-p", []string{"new:1"}, nil
+	}, func(c *Client) {
+		c.creds = credentialsStore{paths: paths}
+	})
+	cache := c.store.Get(1)
+	cache.creds = TurnCredentials{
+		Username:    "old-u",
+		Password:    "old-p",
+		ServerAddrs: []string{"old:1"},
+		ExpiresAt:   time.Now().Add(30 * time.Second),
+		Link:        "L",
+	}
+	if err := c.RefreshExpiringCredentials(context.Background(), "L", 1, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 1 || cache.creds.Username != "new-u" {
+		t.Fatalf("credentials were not refreshed: calls=%d user=%q", calls.Load(), cache.creds.Username)
+	}
+	if restored, ok := c.creds.load(c.store.CacheID(1), "L", time.Now()); !ok || restored.Username != "new-u" {
+		t.Fatalf("refreshed credentials were not persisted: ok=%v creds=%+v", ok, restored)
 	}
 }
 
@@ -284,7 +337,7 @@ func TestLockoutBlocksFetch(t *testing.T) {
 		t.Fatal("lockout deadline not in future")
 	}
 
-	_, _, _, err := c.GetCredentials(context.Background(), "L", 0)
+	_, _, _, _, err := c.GetCredentials(context.Background(), "L", 0)
 	if err == nil || !errors.Is(err, ErrLockoutActive) {
 		t.Fatalf("expected lockout error, got %v", err)
 	}
@@ -299,13 +352,13 @@ func TestThrottleHonorsContextCancel(t *testing.T) {
 	// Force throttle to wait long enough that ctx-cancel wins.
 	c.minFetchIntervalFn = func() time.Duration { return time.Hour }
 	// Prime lastFetchTime so the next call will throttle.
-	if _, _, _, err := c.GetCredentials(context.Background(), "L1", 0); err != nil {
+	if _, _, _, _, err := c.GetCredentials(context.Background(), "L1", 0); err != nil {
 		t.Fatal(err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, _, _, err := c.GetCredentials(ctx, "L2", 100) // different cache group -> miss cache
+	_, _, _, _, err := c.GetCredentials(ctx, "L2", 100) // different cache group -> miss cache
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}

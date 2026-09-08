@@ -121,7 +121,7 @@ func (c *Client) burnPersona(streamID int) {
 }
 
 // GetCredentials возвращает учетные данные TURN, используя кеш или запрашивая их у VK.
-func (c *Client) GetCredentials(ctx context.Context, link string, streamID int) (string, string, []string, error) {
+func (c *Client) GetCredentials(ctx context.Context, link string, streamID int) (string, string, []string, time.Time, error) {
 	cache := c.store.Get(streamID)
 	cacheID := c.store.CacheID(streamID)
 
@@ -132,7 +132,7 @@ func (c *Client) GetCredentials(ctx context.Context, link string, streamID int) 
 		addrs := orderAddrs(cache.creds.ServerAddrs, streamID)
 		cache.mutex.RUnlock()
 		c.log.Debugf("[STREAM %d] [VK Auth] Using cached credentials (cache=%d, expires in %v, server=%s)", streamID, cacheID, expires, addrs[0])
-		return u, p, addrs, nil
+		return u, p, addrs, cache.creds.ExpiresAt, nil
 	}
 	cache.mutex.RUnlock()
 
@@ -140,7 +140,7 @@ func (c *Client) GetCredentials(ctx context.Context, link string, streamID int) 
 	defer cache.mutex.Unlock()
 
 	if cache.creds.Link == link && time.Now().Before(cache.creds.ExpiresAt) && len(cache.creds.ServerAddrs) > 0 {
-		return cache.creds.Username, cache.creds.Password, orderAddrs(cache.creds.ServerAddrs, streamID), nil
+		return cache.creds.Username, cache.creds.Password, orderAddrs(cache.creds.ServerAddrs, streamID), cache.creds.ExpiresAt, nil
 	}
 	if creds, ok := c.creds.load(cacheID, link, time.Now()); ok {
 		cache.creds = creds
@@ -148,12 +148,12 @@ func (c *Client) GetCredentials(ctx context.Context, link string, streamID int) 
 		addrs := orderAddrs(creds.ServerAddrs, streamID)
 		c.log.Debugf("[STREAM %d] [VK Auth] Using persisted credentials (cache=%d, expires in %v, server=%s)",
 			streamID, cacheID, expires, addrs[0])
-		return creds.Username, creds.Password, addrs, nil
+		return creds.Username, creds.Password, addrs, creds.ExpiresAt, nil
 	}
 
 	user, pass, addrs, err := c.fetchSerialized(ctx, link, streamID)
 	if err != nil {
-		return "", "", nil, err
+		return "", "", nil, time.Time{}, err
 	}
 
 	cache.creds = TurnCredentials{
@@ -166,7 +166,48 @@ func (c *Client) GetCredentials(ctx context.Context, link string, streamID int) 
 	if !c.creds.save(cacheID, cache.creds) && len(c.creds.paths) > 0 {
 		c.log.Warnf("[STREAM %d] [VK Auth] Credentials cache not persisted (%v)", streamID, c.creds.paths)
 	}
-	return user, pass, orderAddrs(addrs, streamID), nil
+	return user, pass, orderAddrs(addrs, streamID), cache.creds.ExpiresAt, nil
+}
+
+func (c *Client) RefreshExpiringCredentials(ctx context.Context, link string, streamID int, within time.Duration) error {
+	if within <= 0 {
+		within = CacheSafetyMargin
+	}
+	cache := c.store.Get(streamID)
+	cacheID := c.store.CacheID(streamID)
+
+	cache.mutex.Lock()
+	defer cache.mutex.Unlock()
+
+	now := time.Now()
+	creds := cache.creds
+	if !(creds.Link == link && creds.ExpiresAt.After(now) && len(creds.ServerAddrs) > 0) {
+		if restored, ok := c.creds.load(cacheID, link, now); ok {
+			creds = restored
+			cache.creds = restored
+		}
+	}
+	if creds.Link == link && creds.ExpiresAt.After(now.Add(within)) && len(creds.ServerAddrs) > 0 {
+		return nil
+	}
+
+	user, pass, addrs, err := c.fetchSerialized(ctx, link, streamID)
+	if err != nil {
+		return err
+	}
+	cache.creds = TurnCredentials{
+		Username:    user,
+		Password:    pass,
+		ServerAddrs: addrs,
+		ExpiresAt:   time.Now().Add(CredentialLifetime - CacheSafetyMargin).Round(0),
+		Link:        link,
+	}
+	if !c.creds.save(cacheID, cache.creds) && len(c.creds.paths) > 0 {
+		c.log.Warnf("[STREAM %d] [VK Auth] Refreshed credentials cache not persisted (%v)", streamID, c.creds.paths)
+	}
+	c.log.Infof("[STREAM %d] [VK Auth] Credentials refreshed in background (cache=%d, expires in %v)",
+		streamID, cacheID, time.Until(cache.creds.ExpiresAt).Truncate(time.Second))
+	return nil
 }
 
 func orderAddrs(addrs []string, streamID int) []string {
@@ -196,8 +237,11 @@ func (c *Client) HandleAuthError(streamID int) bool {
 
 	if count >= MaxCacheErrors {
 		c.log.Warnf("[VK Auth] Multiple auth errors (%d), invalidating cache %d for stream %d", count, cacheID, streamID)
+		cache.mutex.RLock()
+		link := cache.creds.Link
+		cache.mutex.RUnlock()
 		cache.Invalidate()
-		c.creds.drop(cacheID)
+		c.creds.drop(cacheID, link)
 		c.log.Warnf("[STREAM %d] [VK Auth] Credentials cache invalidated", streamID)
 		return true
 	}
@@ -209,10 +253,14 @@ func (c *Client) ResetErrors(streamID int) {
 }
 
 func (c *Client) DropCredentials(streamID int) {
-	if !c.store.Get(streamID).Invalidate() {
+	cache := c.store.Get(streamID)
+	cache.mutex.RLock()
+	link := cache.creds.Link
+	cache.mutex.RUnlock()
+	if !cache.Invalidate() {
 		return
 	}
-	c.creds.drop(c.store.CacheID(streamID))
+	c.creds.drop(c.store.CacheID(streamID), link)
 	c.log.Warnf("[STREAM %d] [VK Auth] Deallocate unconfirmed - credentials dropped (cache=%d)",
 		streamID, c.store.CacheID(streamID))
 }
