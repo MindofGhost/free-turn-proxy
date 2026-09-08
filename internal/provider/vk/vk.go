@@ -24,6 +24,7 @@ type Config struct {
 	Credentials     []vkauth.VKCredentials
 	FingerprintSeed string
 	StatePaths      []string
+	CredentialPaths []string
 	Log             logx.Logger
 	Debug           bool
 }
@@ -54,12 +55,15 @@ func New(cfg Config, solver ManualSolverFunc) (*Provider, error) {
 		ManualSolver:    solver,
 		FingerprintSeed: cfg.FingerprintSeed,
 		StatePaths:      cfg.StatePaths,
+		CredentialPaths: cfg.CredentialPaths,
 		Log:             cfg.Log,
 	})
 	return &Provider{link: cfg.Link, auth: auth}, nil
 }
 
 func DefaultStatePaths() []string { return statedir.Paths(vkauth.PersonaStateFile) }
+
+func DefaultCredentialPaths() []string { return statedir.Paths(vkauth.CredentialsStateFile) }
 
 func (p *Provider) GetCredentials(ctx context.Context, streamID int) (provider.Credentials, error) {
 	user, pass, addrs, err := p.auth.GetCredentials(ctx, p.link, streamID)

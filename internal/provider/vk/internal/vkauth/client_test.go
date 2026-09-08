@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -207,6 +208,70 @@ func TestGetCredentialsCacheHit(t *testing.T) {
 	}
 }
 
+func TestGetCredentialsUsesPersistedCache(t *testing.T) {
+	t.Parallel()
+
+	paths := []string{filepath.Join(t.TempDir(), CredentialsStateFile)}
+	var calls atomic.Int32
+	first := newTestClient(t, func(_ context.Context, _ string, _ int, _ VKCredentials, _ tlsclient.CookieJar) (string, string, []string, error) {
+		calls.Add(1)
+		return "u", "p", []string{"a:1", "b:2"}, nil
+	}, func(c *Client) {
+		c.creds = credentialsStore{paths: paths}
+	})
+	if _, _, _, err := first.GetCredentials(context.Background(), "L", 1); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted := newTestClient(t, func(_ context.Context, _ string, _ int, _ VKCredentials, _ tlsclient.CookieJar) (string, string, []string, error) {
+		t.Fatal("tokenChain must not be called while persisted credentials are valid")
+		return "", "", nil, nil
+	}, func(c *Client) {
+		c.creds = credentialsStore{paths: paths}
+	})
+	u, p, addrs, err := restarted.GetCredentials(context.Background(), "L", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u != "u" || p != "p" || len(addrs) != 2 || addrs[0] != "b:2" {
+		t.Fatalf("unexpected persisted creds: u=%q p=%q addrs=%v", u, p, addrs)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("fetch calls = %d, want 1", calls.Load())
+	}
+}
+
+func TestGetCredentialsIgnoresExpiredPersistedCache(t *testing.T) {
+	t.Parallel()
+
+	paths := []string{filepath.Join(t.TempDir(), CredentialsStateFile)}
+	st := credentialsState{Entries: map[string]TurnCredentials{cacheKey(0): {
+		Username:    "old-u",
+		Password:    "old-p",
+		ServerAddrs: []string{"old:1"},
+		ExpiresAt:   time.Now().Add(-time.Minute),
+		Link:        "L",
+	}}}
+	if !(credentialsStore{paths: paths}).write(st) {
+		t.Fatal("failed to seed expired credentials cache")
+	}
+
+	var calls atomic.Int32
+	c := newTestClient(t, func(_ context.Context, _ string, _ int, _ VKCredentials, _ tlsclient.CookieJar) (string, string, []string, error) {
+		calls.Add(1)
+		return "new-u", "new-p", []string{"new:1"}, nil
+	}, func(c *Client) {
+		c.creds = credentialsStore{paths: paths}
+	})
+	u, _, _, err := c.GetCredentials(context.Background(), "L", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u != "new-u" || calls.Load() != 1 {
+		t.Fatalf("expired persisted cache was not refreshed: u=%q calls=%d", u, calls.Load())
+	}
+}
+
 func TestLockoutBlocksFetch(t *testing.T) {
 	t.Parallel()
 
@@ -248,7 +313,10 @@ func TestThrottleHonorsContextCancel(t *testing.T) {
 
 func TestDropCredentialsClearsCacheOnce(t *testing.T) {
 	t.Parallel()
-	c := newTestClient(t, nil)
+	paths := []string{filepath.Join(t.TempDir(), CredentialsStateFile)}
+	c := newTestClient(t, nil, func(c *Client) {
+		c.creds = credentialsStore{paths: paths}
+	})
 
 	cache := c.store.Get(1)
 	cache.creds = TurnCredentials{
@@ -258,10 +326,16 @@ func TestDropCredentialsClearsCacheOnce(t *testing.T) {
 		ExpiresAt:   time.Now().Add(time.Minute),
 		Link:        "l",
 	}
+	if !c.creds.save(c.store.CacheID(1), cache.creds) {
+		t.Fatal("failed to seed credentials cache")
+	}
 
 	c.DropCredentials(1)
 	if cache.creds.Username != "" {
 		t.Fatal("credentials survived DropCredentials")
+	}
+	if _, ok := c.creds.load(c.store.CacheID(1), "l", time.Now()); ok {
+		t.Fatal("credentials survived DropCredentials on disk")
 	}
 	// Второй стрим того же кэша не должен повторять сброс: иначе один обрыв даёт N строк.
 	if cache.Invalidate() {

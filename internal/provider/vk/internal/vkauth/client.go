@@ -30,6 +30,7 @@ type Config struct {
 	Platform        browserprofile.Platform
 	FingerprintSeed string
 	StatePaths      []string
+	CredentialPaths []string
 	Log             logx.Logger
 }
 
@@ -44,6 +45,7 @@ type Client struct {
 	log         logx.Logger
 
 	store *Store
+	creds credentialsStore
 
 	lockout atomic.Int64
 
@@ -72,6 +74,7 @@ func New(cfg Config) *Client {
 		manualSolve: cfg.ManualSolver,
 		log:         cfg.Log,
 		store:       NewStore(cfg.StreamsPerCache),
+		creds:       credentialsStore{paths: cfg.CredentialPaths},
 	}
 	if len(c.credentials) == 0 {
 		c.credentials = DefaultCredentials
@@ -139,6 +142,14 @@ func (c *Client) GetCredentials(ctx context.Context, link string, streamID int) 
 	if cache.creds.Link == link && time.Now().Before(cache.creds.ExpiresAt) && len(cache.creds.ServerAddrs) > 0 {
 		return cache.creds.Username, cache.creds.Password, orderAddrs(cache.creds.ServerAddrs, streamID), nil
 	}
+	if creds, ok := c.creds.load(cacheID, link, time.Now()); ok {
+		cache.creds = creds
+		expires := time.Until(creds.ExpiresAt)
+		addrs := orderAddrs(creds.ServerAddrs, streamID)
+		c.log.Debugf("[STREAM %d] [VK Auth] Using persisted credentials (cache=%d, expires in %v, server=%s)",
+			streamID, cacheID, expires, addrs[0])
+		return creds.Username, creds.Password, addrs, nil
+	}
 
 	user, pass, addrs, err := c.fetchSerialized(ctx, link, streamID)
 	if err != nil {
@@ -151,6 +162,9 @@ func (c *Client) GetCredentials(ctx context.Context, link string, streamID int) 
 		ServerAddrs: addrs,
 		ExpiresAt:   time.Now().Add(CredentialLifetime - CacheSafetyMargin).Round(0),
 		Link:        link,
+	}
+	if !c.creds.save(cacheID, cache.creds) && len(c.creds.paths) > 0 {
+		c.log.Warnf("[STREAM %d] [VK Auth] Credentials cache not persisted (%v)", streamID, c.creds.paths)
 	}
 	return user, pass, orderAddrs(addrs, streamID), nil
 }
@@ -183,6 +197,7 @@ func (c *Client) HandleAuthError(streamID int) bool {
 	if count >= MaxCacheErrors {
 		c.log.Warnf("[VK Auth] Multiple auth errors (%d), invalidating cache %d for stream %d", count, cacheID, streamID)
 		cache.Invalidate()
+		c.creds.drop(cacheID)
 		c.log.Warnf("[STREAM %d] [VK Auth] Credentials cache invalidated", streamID)
 		return true
 	}
@@ -197,6 +212,7 @@ func (c *Client) DropCredentials(streamID int) {
 	if !c.store.Get(streamID).Invalidate() {
 		return
 	}
+	c.creds.drop(c.store.CacheID(streamID))
 	c.log.Warnf("[STREAM %d] [VK Auth] Deallocate unconfirmed - credentials dropped (cache=%d)",
 		streamID, c.store.CacheID(streamID))
 }

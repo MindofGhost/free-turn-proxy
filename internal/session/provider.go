@@ -36,6 +36,7 @@ func buildProvider(
 				StreamsAlive:    connected.Load,
 				FingerprintSeed: cfg.ClientID,
 				StatePaths:      vk.DefaultStatePaths(),
+				CredentialPaths: vk.DefaultCredentialPaths(),
 				Log:             logger,
 				Debug:           cfg.Log.Debug,
 			}, solver)
