@@ -33,7 +33,7 @@ const (
 )
 
 const (
-	connectTimeout     = 15 * time.Second
+	connectTimeout     = 90 * time.Second
 	stopTimeout        = 5 * time.Second
 	tunnelCloseTimeout = 3 * time.Second
 )
