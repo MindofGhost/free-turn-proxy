@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -125,25 +124,20 @@ func (c *Client) GetCredentials(ctx context.Context, link string, streamID int) 
 	cache := c.store.Get(streamID)
 	cacheID := c.store.CacheID(streamID)
 
-	cache.mutex.RLock()
-	if cache.creds.Link == link && time.Now().Before(cache.creds.ExpiresAt) && len(cache.creds.ServerAddrs) > 0 {
-		expires := time.Until(cache.creds.ExpiresAt)
-		u, p := cache.creds.Username, cache.creds.Password
-		addrs := orderAddrs(cache.creds.ServerAddrs, streamID)
-		cache.mutex.RUnlock()
-		c.log.Debugf("[STREAM %d] [VK Auth] Using cached credentials (cache=%d, expires in %v, server=%s)", streamID, cacheID, expires, addrs[0])
-		return u, p, addrs, cache.creds.ExpiresAt, nil
+	if creds, addrs, ok := cache.lookup(link, streamID); ok {
+		c.log.Debugf("[STREAM %d] [VK Auth] Using cached credentials (cache=%d, expires in %v, server=%s)",
+			streamID, cacheID, time.Until(creds.ExpiresAt), addrs[0])
+		return creds.Username, creds.Password, addrs, creds.ExpiresAt, nil
 	}
-	cache.mutex.RUnlock()
 
-	cache.mutex.Lock()
-	defer cache.mutex.Unlock()
+	cache.fetchMu.Lock()
+	defer cache.fetchMu.Unlock()
 
-	if cache.creds.Link == link && time.Now().Before(cache.creds.ExpiresAt) && len(cache.creds.ServerAddrs) > 0 {
-		return cache.creds.Username, cache.creds.Password, orderAddrs(cache.creds.ServerAddrs, streamID), cache.creds.ExpiresAt, nil
+	if creds, addrs, ok := cache.lookup(link, streamID); ok {
+		return creds.Username, creds.Password, addrs, creds.ExpiresAt, nil
 	}
 	if creds, ok := c.creds.load(cacheID, link, time.Now()); ok {
-		cache.creds = creds
+		cache.store(creds)
 		expires := time.Until(creds.ExpiresAt)
 		addrs := orderAddrs(creds.ServerAddrs, streamID)
 		c.log.Debugf("[STREAM %d] [VK Auth] Using persisted credentials (cache=%d, expires in %v, server=%s)",
@@ -156,17 +150,18 @@ func (c *Client) GetCredentials(ctx context.Context, link string, streamID int) 
 		return "", "", nil, time.Time{}, err
 	}
 
-	cache.creds = TurnCredentials{
+	creds := TurnCredentials{
 		Username:    user,
 		Password:    pass,
 		ServerAddrs: addrs,
 		ExpiresAt:   time.Now().Add(CredentialLifetime - CacheSafetyMargin).Round(0),
 		Link:        link,
 	}
-	if !c.creds.save(cacheID, cache.creds) && len(c.creds.paths) > 0 {
+	cache.store(creds)
+	if !c.creds.save(cacheID, creds) && len(c.creds.paths) > 0 {
 		c.log.Warnf("[STREAM %d] [VK Auth] Credentials cache not persisted (%v)", streamID, c.creds.paths)
 	}
-	return user, pass, orderAddrs(addrs, streamID), cache.creds.ExpiresAt, nil
+	return user, pass, orderAddrs(addrs, streamID), creds.ExpiresAt, nil
 }
 
 func (c *Client) RefreshExpiringCredentials(ctx context.Context, link string, streamID int, within time.Duration) error {
@@ -176,15 +171,15 @@ func (c *Client) RefreshExpiringCredentials(ctx context.Context, link string, st
 	cache := c.store.Get(streamID)
 	cacheID := c.store.CacheID(streamID)
 
-	cache.mutex.Lock()
-	defer cache.mutex.Unlock()
+	cache.fetchMu.Lock()
+	defer cache.fetchMu.Unlock()
 
 	now := time.Now()
-	creds := cache.creds
-	if !(creds.Link == link && creds.ExpiresAt.After(now) && len(creds.ServerAddrs) > 0) {
+	creds, _, ok := cache.lookup(link, streamID)
+	if !ok {
 		if restored, ok := c.creds.load(cacheID, link, now); ok {
 			creds = restored
-			cache.creds = restored
+			cache.store(restored)
 		}
 	}
 	if creds.Link == link && creds.ExpiresAt.After(now.Add(within)) && len(creds.ServerAddrs) > 0 {
@@ -195,18 +190,19 @@ func (c *Client) RefreshExpiringCredentials(ctx context.Context, link string, st
 	if err != nil {
 		return err
 	}
-	cache.creds = TurnCredentials{
+	creds = TurnCredentials{
 		Username:    user,
 		Password:    pass,
 		ServerAddrs: addrs,
 		ExpiresAt:   time.Now().Add(CredentialLifetime - CacheSafetyMargin).Round(0),
 		Link:        link,
 	}
-	if !c.creds.save(cacheID, cache.creds) && len(c.creds.paths) > 0 {
+	cache.store(creds)
+	if !c.creds.save(cacheID, creds) && len(c.creds.paths) > 0 {
 		c.log.Warnf("[STREAM %d] [VK Auth] Refreshed credentials cache not persisted (%v)", streamID, c.creds.paths)
 	}
 	c.log.Infof("[STREAM %d] [VK Auth] Credentials refreshed in background (cache=%d, expires in %v)",
-		streamID, cacheID, time.Until(cache.creds.ExpiresAt).Truncate(time.Second))
+		streamID, cacheID, time.Until(creds.ExpiresAt).Truncate(time.Second))
 	return nil
 }
 
@@ -344,8 +340,7 @@ func (c *Client) fetch(ctx context.Context, link string, streamID int) (string, 
 			errors.Is(err, ErrCallFull) || errors.Is(err, captcha.ErrUnavailable) {
 			return "", "", nil, err
 		}
-		es := err.Error()
-		if strings.Contains(es, "error_code:29") || strings.Contains(es, "error_code: 29") || strings.Contains(es, "Rate limit") {
+		if errors.Is(err, ErrVKRateLimit) {
 			c.log.Warnf("[STREAM %d] [VK Auth] Rate limit detected, trying next credentials", streamID)
 		}
 	}
