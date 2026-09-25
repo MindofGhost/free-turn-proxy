@@ -40,6 +40,7 @@ func ClientArgs(c *Client) []string {
 	addIf(c.DNS.Mode != def.DNS.Mode, "-dns-mode", c.DNS.Mode)
 	addIf(len(c.DNS.Servers) > 0, "-dns-servers", strings.Join(c.DNS.Servers, ","))
 	addIf(c.ClientID != "", "-client-id", c.ClientID)
+	addIf(c.NoClientIDAck, "-no-client-id-ack")
 	addIf(c.SubURL != "", "-sub", c.SubURL)
 	addIf(c.Log.Debug, "-debug")
 	return args

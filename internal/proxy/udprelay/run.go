@@ -27,12 +27,13 @@ type AuthHandler interface {
 
 // Params содержит способ подъёма потока и параметры обфускации.
 type Params struct {
-	Dial         DialFunc
-	Profile      string
-	ObfKey       []byte
-	ObfTiming    time.Duration
-	ClientID     string
-	TrafficStats *stats.Stats
+	Dial          DialFunc
+	Profile       string
+	ObfKey        []byte
+	ObfTiming     time.Duration
+	ClientID      string
+	NoClientIDAck bool
+	TrafficStats  *stats.Stats
 }
 
 const streamStartBarrier = 20 * time.Second

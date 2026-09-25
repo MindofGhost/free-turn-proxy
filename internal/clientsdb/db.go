@@ -220,9 +220,24 @@ func idRecord(clientID string, mode byte) []byte {
 	return append(buf, mode, idVersionAck)
 }
 
-func WriteClientID(ctx context.Context, conn net.Conn, clientID string, mode byte) error {
-	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
+func WriteClientID(ctx context.Context, conn net.Conn, clientID string, mode byte, noAck bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	rec := idRecord(clientID, mode)
+	if noAck {
+		// Omit the version byte so new servers also refrain from sending an ACK.
+		rec = rec[:len(rec)-1]
+		n, err := conn.Write(rec)
+		if err != nil {
+			return fmt.Errorf("send client ID: %w", err)
+		}
+		if n != len(rec) {
+			return io.ErrShortWrite
+		}
+		return nil
+	}
+	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
 	var buf [16]byte
 	for _, wait := range idRetransmit {
 		if _, err := conn.Write(rec); err != nil {

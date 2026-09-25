@@ -45,14 +45,15 @@ type DialFunc = udprelay.DialFunc
 type AuthHandler = udprelay.AuthHandler
 
 type Params struct {
-	Bond         bool
-	Dial         DialFunc
-	Profile      string
-	ObfKey       []byte
-	ObfTiming    time.Duration
-	KCPProfile   kcpmux.Profile
-	ClientID     string
-	TrafficStats *stats.Stats
+	Bond          bool
+	Dial          DialFunc
+	Profile       string
+	ObfKey        []byte
+	ObfTiming     time.Duration
+	KCPProfile    kcpmux.Profile
+	ClientID      string
+	NoClientIDAck bool
+	TrafficStats  *stats.Stats
 }
 
 type Deps struct {
@@ -399,7 +400,7 @@ func createSession(ctx context.Context, deps *Deps, params *Params, peer *net.UD
 	if params.Bond {
 		mode = clientsdb.ModeTCPBond
 	}
-	if err = clientsdb.WriteClientID(ctx, dtlsConn, params.ClientID, mode); err != nil {
+	if err = clientsdb.WriteClientID(ctx, dtlsConn, params.ClientID, mode, params.NoClientIDAck); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("send client ID: %w", err)
 	}

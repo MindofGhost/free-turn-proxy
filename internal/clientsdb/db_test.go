@@ -135,7 +135,7 @@ func accept(t *testing.T, conn net.Conn) (string, byte, net.Conn, error) {
 func TestClientIDRoundTrip(t *testing.T) {
 	client, server := pipe()
 	errc := make(chan error, 1)
-	go func() { errc <- WriteClientID(t.Context(), client, testID, ModeTCP) }()
+	go func() { errc <- WriteClientID(t.Context(), client, testID, ModeTCP, false) }()
 
 	id, mode, _, err := accept(t, server)
 	if err != nil || id != testID || mode != ModeTCP {
@@ -150,7 +150,7 @@ func TestClientIDRoundTrip(t *testing.T) {
 func TestClientIDSurvivesLostRecord(t *testing.T) {
 	client, server := pipe()
 	errc := make(chan error, 1)
-	go func() { errc <- WriteClientID(t.Context(), &dropWrites{Conn: client, n: 1}, testID, ModeUDP) }()
+	go func() { errc <- WriteClientID(t.Context(), &dropWrites{Conn: client, n: 1}, testID, ModeUDP, false) }()
 
 	if id, _, _, err := accept(t, server); err != nil || id != testID {
 		t.Fatalf("accept = %q/%v", id, err)
@@ -164,7 +164,7 @@ func TestClientIDSurvivesLostAck(t *testing.T) {
 	client, server := pipe()
 	errc := make(chan error, 1)
 	go func() {
-		if err := WriteClientID(t.Context(), client, testID, ModeUDP); err != nil {
+		if err := WriteClientID(t.Context(), client, testID, ModeUDP, false); err != nil {
 			errc <- err
 			return
 		}

@@ -136,8 +136,7 @@ func (c *Client) GetCredentials(ctx context.Context, link string, streamID int) 
 	if creds, addrs, ok := cache.lookup(link, streamID); ok {
 		return creds.Username, creds.Password, addrs, creds.ExpiresAt, nil
 	}
-	if creds, ok := c.creds.load(cacheID, link, time.Now()); ok {
-		cache.store(creds)
+	if creds, ok := c.restoreCredentials(cache, cacheID, link); ok {
 		expires := time.Until(creds.ExpiresAt)
 		addrs := orderAddrs(creds.ServerAddrs, streamID)
 		c.log.Debugf("[STREAM %d] [VK Auth] Using persisted credentials (cache=%d, expires in %v, server=%s)",
@@ -157,8 +156,7 @@ func (c *Client) GetCredentials(ctx context.Context, link string, streamID int) 
 		ExpiresAt:   time.Now().Add(CredentialLifetime - CacheSafetyMargin).Round(0),
 		Link:        link,
 	}
-	cache.store(creds)
-	if !c.creds.save(cacheID, creds) && len(c.creds.paths) > 0 {
+	if !c.storeCredentials(cache, cacheID, creds) && len(c.creds.paths) > 0 {
 		c.log.Warnf("[STREAM %d] [VK Auth] Credentials cache not persisted (%v)", streamID, c.creds.paths)
 	}
 	return user, pass, orderAddrs(addrs, streamID), creds.ExpiresAt, nil
@@ -177,9 +175,8 @@ func (c *Client) RefreshExpiringCredentials(ctx context.Context, link string, st
 	now := time.Now()
 	creds, _, ok := cache.lookup(link, streamID)
 	if !ok {
-		if restored, ok := c.creds.load(cacheID, link, now); ok {
+		if restored, ok := c.restoreCredentials(cache, cacheID, link); ok {
 			creds = restored
-			cache.store(restored)
 		}
 	}
 	if creds.Link == link && creds.ExpiresAt.After(now.Add(within)) && len(creds.ServerAddrs) > 0 {
@@ -197,8 +194,7 @@ func (c *Client) RefreshExpiringCredentials(ctx context.Context, link string, st
 		ExpiresAt:   time.Now().Add(CredentialLifetime - CacheSafetyMargin).Round(0),
 		Link:        link,
 	}
-	cache.store(creds)
-	if !c.creds.save(cacheID, creds) && len(c.creds.paths) > 0 {
+	if !c.storeCredentials(cache, cacheID, creds) && len(c.creds.paths) > 0 {
 		c.log.Warnf("[STREAM %d] [VK Auth] Refreshed credentials cache not persisted (%v)", streamID, c.creds.paths)
 	}
 	c.log.Infof("[STREAM %d] [VK Auth] Credentials refreshed in background (cache=%d, expires in %v)",
@@ -233,11 +229,7 @@ func (c *Client) HandleAuthError(streamID int) bool {
 
 	if count >= MaxCacheErrors {
 		c.log.Warnf("[VK Auth] Multiple auth errors (%d), invalidating cache %d for stream %d", count, cacheID, streamID)
-		cache.mutex.RLock()
-		link := cache.creds.Link
-		cache.mutex.RUnlock()
-		cache.Invalidate()
-		c.creds.drop(cacheID, link)
+		c.invalidateCredentials(cache, cacheID)
 		c.log.Warnf("[STREAM %d] [VK Auth] Credentials cache invalidated", streamID)
 		return true
 	}
@@ -250,15 +242,39 @@ func (c *Client) ResetErrors(streamID int) {
 
 func (c *Client) DropCredentials(streamID int) {
 	cache := c.store.Get(streamID)
+	if !c.invalidateCredentials(cache, c.store.CacheID(streamID)) {
+		return
+	}
+	c.log.Warnf("[STREAM %d] [VK Auth] Deallocate unconfirmed - credentials dropped (cache=%d)",
+		streamID, c.store.CacheID(streamID))
+}
+
+func (c *Client) restoreCredentials(cache *StreamCredentialsCache, cacheID int, link string) (TurnCredentials, bool) {
+	cache.stateMu.Lock()
+	defer cache.stateMu.Unlock()
+	creds, ok := c.creds.load(cacheID, link, time.Now())
+	if ok {
+		cache.store(creds)
+	}
+	return creds, ok
+}
+
+func (c *Client) storeCredentials(cache *StreamCredentialsCache, cacheID int, creds TurnCredentials) bool {
+	cache.stateMu.Lock()
+	defer cache.stateMu.Unlock()
+	cache.store(creds)
+	return c.creds.save(cacheID, creds)
+}
+
+func (c *Client) invalidateCredentials(cache *StreamCredentialsCache, cacheID int) bool {
+	cache.stateMu.Lock()
+	defer cache.stateMu.Unlock()
 	cache.mutex.RLock()
 	link := cache.creds.Link
 	cache.mutex.RUnlock()
-	if !cache.Invalidate() {
-		return
-	}
-	c.creds.drop(c.store.CacheID(streamID), link)
-	c.log.Warnf("[STREAM %d] [VK Auth] Deallocate unconfirmed - credentials dropped (cache=%d)",
-		streamID, c.store.CacheID(streamID))
+	had := cache.Invalidate()
+	c.creds.drop(cacheID, link)
+	return had
 }
 
 func (c *Client) LockoutUntilUnix() int64 {

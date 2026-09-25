@@ -10,9 +10,11 @@ import (
 )
 
 type StreamCredentialsCache struct {
-	creds         TurnCredentials
-	mutex         sync.RWMutex
-	fetchMu       sync.Mutex
+	creds   TurnCredentials
+	mutex   sync.RWMutex
+	fetchMu sync.Mutex
+	// stateMu serializes memory/disk transactions, never network requests.
+	stateMu       sync.Mutex
 	errorCount    atomic.Int32
 	lastErrorTime atomic.Int64
 }

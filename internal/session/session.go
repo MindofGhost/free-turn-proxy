@@ -503,12 +503,13 @@ func (s *Session) relayUDP(ctx context.Context, auth udprelay.AuthHandler, dial 
 		HandshakeSem:     make(chan struct{}, s.opts.HandshakeConcurrency),
 	}
 	params := &udprelay.Params{
-		Dial:         dial,
-		Profile:      string(s.cfg.Obf.Profile),
-		ObfKey:       s.cfg.Obf.Key,
-		ObfTiming:    s.cfg.Obf.Timing,
-		ClientID:     s.cfg.ClientID,
-		TrafficStats: s.trafficStats(),
+		Dial:          dial,
+		Profile:       string(s.cfg.Obf.Profile),
+		ObfKey:        s.cfg.Obf.Key,
+		ObfTiming:     s.cfg.Obf.Timing,
+		ClientID:      s.cfg.ClientID,
+		NoClientIDAck: s.cfg.NoClientIDAck,
+		TrafficStats:  s.trafficStats(),
 	}
 	return udprelay.Run(ctx, dialer, auth, log, &s.connected, routeCallback, params, peer, local, s.total)
 }
@@ -526,14 +527,15 @@ func (s *Session) relayTCP(ctx context.Context, auth udprelay.AuthHandler, dial 
 		Recycle:          s.recycleCh,
 	}
 	params := &tcprelay.Params{
-		Bond:         s.cfg.Proxy.Bond,
-		Dial:         dial,
-		Profile:      string(s.cfg.Obf.Profile),
-		ObfKey:       s.cfg.Obf.Key,
-		ObfTiming:    s.cfg.Obf.Timing,
-		KCPProfile:   s.cfg.KCP.Profile,
-		ClientID:     s.cfg.ClientID,
-		TrafficStats: s.trafficStats(),
+		Bond:          s.cfg.Proxy.Bond,
+		Dial:          dial,
+		Profile:       string(s.cfg.Obf.Profile),
+		ObfKey:        s.cfg.Obf.Key,
+		ObfTiming:     s.cfg.Obf.Timing,
+		KCPProfile:    s.cfg.KCP.Profile,
+		ClientID:      s.cfg.ClientID,
+		NoClientIDAck: s.cfg.NoClientIDAck,
+		TrafficStats:  s.trafficStats(),
 	}
 	return tcprelay.Run(ctx, deps, params, peer, s.cfg.Proxy.Listen, s.total)
 }
