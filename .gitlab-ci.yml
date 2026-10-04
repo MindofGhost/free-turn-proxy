@@ -72,10 +72,15 @@ install-sh:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_TAG == null
+  variables:
+    DEBIAN_FRONTEND: noninteractive
   before_script:
-    - apt-get update -qq && apt-get install -y -qq bats
+    - apt-get update -qq && apt-get install -y -qq bats jq
+    # Tests are written for non-root (jq-gated + a needs_root case); the
+    # docker executor runs as root, so execute them as an unprivileged user.
+    - useradd -m tester || true
   script:
-    - bats scripts/tests
+    - su tester -c "bats scripts/tests"
 
 # ---------- build ----------
 
