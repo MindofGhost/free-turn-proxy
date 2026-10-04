@@ -148,7 +148,8 @@ build-android:
     - export PATH="$PATH:$(go env GOPATH)/bin"
     - gomobile init
   script:
-    - task build:android
+    # CI clones carry no tags, so git describe yields dev — stamp the real version instead.
+    - task build:android --var VERSION="${CI_COMMIT_TAG:-dev}"
     - ls -la dist/
   artifacts:
     paths:
