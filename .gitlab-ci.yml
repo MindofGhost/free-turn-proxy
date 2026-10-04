@@ -1,0 +1,198 @@
+# GitLab CI for free-turn-proxy (ported from .github/workflows).
+# Canonical project: https://gitlab.com/freeturn/free-turn-proxy
+# - macOS/iOS jobs are intentionally dropped (no macOS runners on gitlab.com SaaS).
+# - Telegram announce jobs are dropped per owner request.
+# Required CI/CD variables (Settings > CI/CD > Variables, masked + protected):
+#   GITLAB_TOKEN - Project/Group access token with `api` + `write_repository`
+#                  (used by release-please and GoReleaser; keep protected so tags can read it).
+
+stages:
+  - lint
+  - test
+  - build
+  - release-please
+  - release
+
+variables:
+  GO_VERSION: "1.26.7"
+  GOLANGCI_VERSION: "v2.12.2"
+  GOVULN_VERSION: "v1.6.0"
+  GORELEASER_VERSION: "v2.17.1"
+  GOMOBILE_VERSION: "v0.0.0-20260821190718-4776eadac327"
+  TASK_VERSION: "3.52.0"
+  GIT_STRATEGY: clone
+  GIT_DEPTH: 0
+
+default:
+  interruptible: true
+
+# ---------- lint ----------
+
+lint:
+  stage: lint
+  image: golang:${GO_VERSION}
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_TAG == null
+  before_script:
+    - go version
+    - sh -c "curl -fsSL https://taskfile.dev/install.sh | sh -s -- -b /usr/local/bin v${TASK_VERSION}"
+  script:
+    - task fmt:check
+    - task vet
+    - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_VERSION}
+    - golangci-lint run --timeout=5m ./...
+
+# ---------- test ----------
+
+test:
+  stage: test
+  image: golang:${GO_VERSION}
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_TAG == null
+  before_script:
+    - sh -c "curl -fsSL https://taskfile.dev/install.sh | sh -s -- -b /usr/local/bin v${TASK_VERSION}"
+  script:
+    - task test
+
+vuln:
+  stage: test
+  image: golang:${GO_VERSION}
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_TAG == null
+  script:
+    - go install golang.org/x/vuln/cmd/govulncheck@${GOVULN_VERSION}
+    - govulncheck ./...
+
+install-sh:
+  stage: test
+  image: ubuntu:24.04
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_TAG == null
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq bats
+  script:
+    - bats scripts/tests
+
+# ---------- build ----------
+
+build-snapshot:
+  stage: build
+  image: golang:${GO_VERSION}
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_TAG == null
+  before_script:
+    - go install github.com/goreleaser/goreleaser/v2@${GORELEASER_VERSION}
+  script:
+    # checksum.extra_files globs mobile-dist; snapshot ships without mobile artifacts.
+    - mkdir -p mobile-dist && touch mobile-dist/freeturn.aar mobile-dist/freeturn-sources.jar
+    - goreleaser release --snapshot --clean --skip=publish,sign,docker,announce,sbom
+  artifacts:
+    paths:
+      - dist/
+    expire_in: 7 days
+    when: always
+
+# Builds the Android AAR (gomobile) consumed by turn-proxy-android and attached
+# to GitLab releases by GoReleaser. Installs a minimal Android SDK/NDK on demand
+# (SaaS shared runners have no preinstalled SDK) and caches it.
+build-android:
+  stage: build
+  image: golang:${GO_VERSION}
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_TAG == null
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
+  variables:
+    ANDROID_SDK_ROOT: "$CI_PROJECT_DIR/.android-sdk"
+    ANDROID_NDK_HOME: "$CI_PROJECT_DIR/.android-sdk/ndk/26.1.10909125"
+    JAVA_HOME: "/usr/lib/jvm/java-17-openjdk-amd64"
+  cache:
+    key: android-sdk-ndk26
+    paths:
+      - .android-sdk/
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq openjdk-17-jdk-headless unzip curl
+    - export PATH=$JAVA_HOME/bin:$PATH
+    - sh -c "curl -fsSL https://taskfile.dev/install.sh | sh -s -- -b /usr/local/bin v${TASK_VERSION}"
+    - |
+      if [ ! -d "$ANDROID_SDK_ROOT/cmdline-tools/latest" ]; then
+        mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
+        curl -fsSL -o /tmp/cmdtools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+        unzip -q /tmp/cmdtools.zip -d "$ANDROID_SDK_ROOT/cmdline-tools"
+        mv "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools" "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+      fi
+    - export PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH
+    - yes | sdkmanager --licenses > /dev/null || true
+    - sdkmanager "platform-tools" "platforms;android-34" "ndk;26.1.10909125"
+    - go install golang.org/x/mobile/cmd/gomobile@${GOMOBILE_VERSION}
+    - gomobile init
+  script:
+    - task build:android
+    - ls -la dist/
+  artifacts:
+    paths:
+      - dist/freeturn.aar
+      - dist/freeturn-sources.jar
+    expire_in: 7 days
+
+# ---------- release-please (replaces .github/workflows/release-please.yml) ----------
+
+release-please:
+  stage: release-please
+  image: node:22
+  resource_group: release-please
+  rules:
+    # Only on pushes to master (not tags, not MRs); skip its own release commits.
+    - if: '$CI_COMMIT_BRANCH == "master" && $CI_COMMIT_TAG == null && $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_MESSAGE !~ /^chore(\(.*\))?: release/'
+      when: on_success
+    - when: never
+  before_script:
+    - npm install -g release-please
+  script:
+    # Opens/updates the "chore: release X.Y.Z" MR; on merge it tags + creates the GitLab release.
+    - |
+      release-please release-pr \
+        --repo-url "$CI_PROJECT_URL" \
+        --token "$GITLAB_TOKEN" \
+        --target-branch master
+    - |
+      release-please gitlab-release \
+        --repo-url "$CI_PROJECT_URL" \
+        --token "$GITLAB_TOKEN" \
+        --target-branch master
+
+# ---------- release (replaces .github/workflows/release.yml, minus Telegram) ----------
+
+goreleaser:
+  stage: release
+  image: golang:${GO_VERSION}
+  services:
+    - docker:27-dind
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
+      when: on_success
+    - when: never
+  variables:
+    DOCKER_HOST: tcp://docker:2375/
+    DOCKER_TLS_CERTDIR: ""
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq docker.io curl
+    - go install github.com/goreleaser/goreleaser/v2@${GORELEASER_VERSION}
+    - docker login $CI_REGISTRY -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD
+    - mkdir -p mobile-dist
+    # AAR from the build-android job (same pipeline) when present; else fail loudly.
+    - |
+      if [ -f dist/freeturn.aar ]; then
+        cp dist/freeturn.aar mobile-dist/freeturn.aar
+        cp dist/freeturn-sources.jar mobile-dist/freeturn-sources.jar || true
+      else
+        echo "WARNING: dist/freeturn.aar missing (build-android did not run?)"
+      fi
+    - ls -la mobile-dist/ || true
+  script:
+    - goreleaser release --clean
