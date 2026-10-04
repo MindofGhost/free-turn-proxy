@@ -142,6 +142,8 @@ build-android:
     - yes | sdkmanager --licenses > /dev/null || true
     - sdkmanager "platform-tools" "platforms;android-34" "ndk;26.1.10909125"
     - go install golang.org/x/mobile/cmd/gomobile@${GOMOBILE_VERSION}
+    # go install targets ~/go/bin, which is not on PATH (setup-go did this for us on GitHub).
+    - export PATH="$PATH:$(go env GOPATH)/bin"
     - gomobile init
   script:
     - task build:android
