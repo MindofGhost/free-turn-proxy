@@ -10,7 +10,6 @@ stages:
   - lint
   - test
   - build
-  - release-please
   - release
 
 variables:
@@ -157,33 +156,10 @@ build-android:
       - dist/freeturn-sources.jar
     expire_in: 7 days
 
-# ---------- release-please (replaces .github/workflows/release-please.yml) ----------
-
-release-please:
-  stage: release-please
-  image: node:22
-  resource_group: release-please
-  rules:
-    # Only on pushes to master (not tags, not MRs); skip its own release commits.
-    - if: '$CI_COMMIT_BRANCH == "master" && $CI_COMMIT_TAG == null && $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_MESSAGE !~ /^chore(\(.*\))?: release/'
-      when: on_success
-    - when: never
-  before_script:
-    - npm install -g release-please
-  script:
-    # Opens/updates the "chore: release X.Y.Z" MR; on merge it tags + creates the GitLab release.
-    - |
-      release-please release-pr \
-        --repo-url "$CI_PROJECT_URL" \
-        --token "$GITLAB_TOKEN" \
-        --target-branch master
-    - |
-      release-please gitlab-release \
-        --repo-url "$CI_PROJECT_URL" \
-        --token "$GITLAB_TOKEN" \
-        --target-branch master
-
 # ---------- release (replaces .github/workflows/release.yml, minus Telegram) ----------
+# NOTE: release-please was dropped - its npm build is GitHub-only (api.github.com
+# hardcoded, no GitLab mode). Releases are cut manually: push a v* tag and the
+# goreleaser job below publishes binaries + container + GitLab release notes.
 
 goreleaser:
   stage: release
