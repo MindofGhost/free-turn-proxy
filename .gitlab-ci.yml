@@ -201,6 +201,10 @@ goreleaser:
     - apt-get update -qq && apt-get install -y -qq docker.io curl
     - go install github.com/goreleaser/goreleaser/v2@${GORELEASER_VERSION}
     - docker login $CI_REGISTRY -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD
+    # buildx builder with attestation + multi-arch support (replaces setup-buildx/setup-qemu actions).
+    - docker buildx create --name glbuilder --driver docker-container --use || docker buildx use glbuilder
+    - docker buildx inspect --bootstrap
+    - docker run --privileged --rm tonistiigi/binfmt --install arm64,amd64 || true
     - mkdir -p mobile-dist
     # AAR from the build-android job (same pipeline) when present; else fail loudly.
     - |
