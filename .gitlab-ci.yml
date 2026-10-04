@@ -102,7 +102,9 @@ build-snapshot:
 # (SaaS shared runners have no preinstalled SDK) and caches it.
 build-android:
   stage: build
-  image: golang:${GO_VERSION}
+  # Temurin ships JDK 17; the Go toolchain is installed on demand below.
+  # (golang:* images have no OpenJDK apt packages, hence the flip.)
+  image: eclipse-temurin:17-jdk
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == "master" && $CI_COMMIT_TAG == null
@@ -110,14 +112,19 @@ build-android:
   variables:
     ANDROID_SDK_ROOT: "$CI_PROJECT_DIR/.android-sdk"
     ANDROID_NDK_HOME: "$CI_PROJECT_DIR/.android-sdk/ndk/26.1.10909125"
-    JAVA_HOME: "/usr/lib/jvm/java-17-openjdk-amd64"
   cache:
     key: android-sdk-ndk26
     paths:
       - .android-sdk/
   before_script:
-    - apt-get update -qq && apt-get install -y -qq openjdk-17-jdk-headless unzip curl
-    - export PATH=$JAVA_HOME/bin:$PATH
+    - apt-get update -qq && apt-get install -y -qq curl unzip
+    - |
+      if ! go version 2>/dev/null | grep -q "go${GO_VERSION}"; then
+        curl -fsSL -o /tmp/go.tgz "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"
+        tar -C /usr/local -xzf /tmp/go.tgz
+      fi
+    - export PATH=/usr/local/go/bin:$PATH
+    - go version
     - sh -c "curl -fsSL https://taskfile.dev/install.sh | sh -s -- -b /usr/local/bin v${TASK_VERSION}"
     - |
       if [ ! -d "$ANDROID_SDK_ROOT/cmdline-tools/latest" ]; then
