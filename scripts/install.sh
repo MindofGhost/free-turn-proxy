@@ -84,6 +84,18 @@ TAIL=80
 NAME=""
 KCP_SET=0
 DRY_RUN=0
+# Явно переданные CLI-флаги (migrate): детект наследия их не затирает.
+SEEN_METHOD=0
+SEEN_BACKEND=0
+SEEN_CONNECT=0
+SEEN_HOST=0
+SEEN_LISTEN_PORT=0
+SEEN_WG_PORT=0
+SEEN_WG_NET=0
+SEEN_MODE=0
+SEEN_OBF_PROFILE=0
+SEEN_OBF_KEY=0
+SEEN_VERSION=0
 PREV_LISTEN_PORT=""
 PREV_SHARE=""
 PEER_IP=""
@@ -92,7 +104,11 @@ PEER_PUB=""
 LEGACY_WG_IFACE="wg0"
 LEGACY_WG_CONF="${FT_WG_DIR:-/etc/wireguard}/$LEGACY_WG_IFACE.conf"
 LEGACY_WG_CONF_FALLBACK="/etc/wireguard/$LEGACY_WG_IFACE.conf"
+# Поколение free-turn-control.sh: install.conf нет, но есть launch.sh/run.args.
+CTL_PREFIX_FILES="launch.sh run.args owner.cid"
 MIGRATE_BACKUP=""
+MIGRATE_KIND=""
+MIGRATE_FRESH_IPS=0
 
 PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
 export PATH
@@ -1135,6 +1151,26 @@ legacy_detect() {
     return 0
 }
 
+# Следы поколения free-turn-control.sh (install.conf нет, но есть launch.sh
+# и run.args с флагами запуска). Возвращает 0, если это control-установка.
+control_detect() {
+    local f
+    for f in $CTL_PREFIX_FILES; do
+        [ -f "$PREFIX/$f" ] && return 0
+    done
+    return 1
+}
+
+# Поколение установки: v5 (наш install.conf), v1 (install.conf без BACKEND=),
+# control (free-turn-control.sh без install.conf), none (чистый хост).
+detect_kind() {
+    if [ -f "$CONF_FILE" ]; then
+        if grep -q '^BACKEND=' "$CONF_FILE" 2>/dev/null; then printf 'v5'; else printf 'v1'; fi
+        return 0
+    fi
+    if control_detect; then printf 'control'; else printf 'none'; fi
+}
+
 legacy_obf_key() {
     local k=${OBF_KEY:-}
     valid_hex64 "$k" 2>/dev/null && { printf '%s' "$k"; return 0; }
@@ -1150,6 +1186,9 @@ legacy_read() {
     MIGRATE_MODE_CHANGED=0
     MIGRATE_OBF_REUSED=0
     MIGRATE_AUTH_WAS_OFF=0
+    MIGRATE_FRESH_IPS=0
+    LEGACY_VERSION=""
+    LEGACY_CLIENTS_FILE=""
 
     local old_mode=${PROXY_MODE:-udp}
     local old_obf=${OBF_PROFILE:-none}
@@ -1163,49 +1202,75 @@ legacy_read() {
     [ -n "$legacy_wg" ] || legacy_wg=""
 
     # BACKEND: свой WG, если старый установщик его поднимал или wg0.conf существует.
-    if [ "$old_wg_setup" = 1 ] || [ -n "$legacy_wg" ]; then
-        BACKEND="new"
-    elif [ -n "$old_backend_port" ]; then
-        BACKEND="external"
-        CONNECT="127.0.0.1:$old_backend_port"
-    else
-        BACKEND="new"
+    # Явные --backend/--connect не трогаем.
+    if [ "${SEEN_BACKEND:-0}" != 1 ] && [ "${SEEN_CONNECT:-0}" != 1 ]; then
+        if [ "$old_wg_setup" = 1 ] || [ -n "$legacy_wg" ]; then
+            BACKEND="new"
+        elif [ -n "$old_backend_port" ]; then
+            BACKEND="external"
+            CONNECT="127.0.0.1:$old_backend_port"
+        else
+            BACKEND="new"
+        fi
     fi
 
-    # Режим: свой WG работает только в udp (validate_config) - tcp+new едет в udp.
-    if [ "$old_mode" = tcp ] && [ "$BACKEND" = new ]; then
-        PROXY_MODE="udp"
-        MIGRATE_MODE_CHANGED=1
-    else
-        PROXY_MODE="$old_mode"
+    # Режим: свой WG работает только в udp (validate_config) - tcp+new едет в udp,
+    # кроме явного --mode (пусть validate_config честно откажет).
+    if [ "${SEEN_MODE:-0}" != 1 ]; then
+        if [ "$old_mode" = tcp ] && [ "$BACKEND" = new ]; then
+            PROXY_MODE="udp"
+            MIGRATE_MODE_CHANGED=1
+        else
+            PROXY_MODE="$old_mode"
+        fi
     fi
 
-    LISTEN_PORT="$old_listen"
+    if [ "${SEEN_LISTEN_PORT:-0}" != 1 ]; then
+        LISTEN_PORT="$old_listen"
+    fi
 
     # Обфускация: апгрейд rtpopus -> rtpopus3 с ТЕМ ЖЕ ключом (ссылки живы).
-    case "$old_obf" in
-        rtpopus)
-            OBF_PROFILE="rtpopus3"
-            if OBF_KEY=$(legacy_obf_key); then MIGRATE_OBF_REUSED=1; else OBF_KEY=""; fi ;;
-        none) OBF_PROFILE="none"; OBF_KEY="" ;;
-        rtpopus2|rtpopus3) OBF_PROFILE="$old_obf"; legacy_obf_key >/dev/null && MIGRATE_OBF_REUSED=1 ;;
-        *) OBF_PROFILE="none"; OBF_KEY="" ;;
-    esac
+    # Явный --obf-profile оставляем как есть (проверит validate_config).
+    if [ "${SEEN_OBF_PROFILE:-0}" = 1 ]; then
+        if [ "${SEEN_OBF_KEY:-0}" != 1 ] && [ "$OBF_PROFILE" != none ]; then
+            legacy_obf_key >/dev/null || OBF_KEY=""
+        fi
+    else
+        case "$old_obf" in
+            rtpopus)
+                OBF_PROFILE="rtpopus3"
+                if OBF_KEY=$(legacy_obf_key); then MIGRATE_OBF_REUSED=1; else OBF_KEY=""; fi ;;
+            none) OBF_PROFILE="none"; OBF_KEY="" ;;
+            rtpopus2|rtpopus3) OBF_PROFILE="$old_obf"; legacy_obf_key >/dev/null && MIGRATE_OBF_REUSED=1 ;;
+            *) OBF_PROFILE="none"; OBF_KEY="" ;;
+        esac
+        if [ "${SEEN_OBF_KEY:-0}" = 1 ] && [ "$OBF_PROFILE" != none ]; then
+            legacy_obf_key >/dev/null || OBF_KEY=""
+        fi
+    fi
 
     # WG: старая сеть фиксирована 10.13.13.0/24 (.1 сервер); порт - BACKEND_PORT.
-    WG_NET="10.13.13.0/24"
-    if [ -n "$old_backend_port" ] && [ "$BACKEND" = new ]; then
-        WG_PORT="$old_backend_port"
-    else
-        WG_PORT="51820"
+    if [ "${SEEN_WG_NET:-0}" != 1 ]; then
+        WG_NET="10.13.13.0/24"
+    fi
+    if [ "${SEEN_WG_PORT:-0}" != 1 ]; then
+        if [ -n "$old_backend_port" ] && [ "$BACKEND" = new ]; then
+            WG_PORT="$old_backend_port"
+        else
+            WG_PORT="51820"
+        fi
     fi
     # Порт WG наружу не открывается и не должен совпадать с listen-портом.
     if [ "$WG_PORT" = "$LISTEN_PORT" ]; then WG_PORT="51820"; fi
 
     # Метод запуска: что реально стоит, то и keep (docker по умолчанию).
-    if [ -f "$UNIT_FILE" ]; then INSTALL_METHOD="systemd"; else INSTALL_METHOD="docker"; fi
+    if [ "${SEEN_METHOD:-0}" != 1 ]; then
+        if [ -f "$UNIT_FILE" ]; then INSTALL_METHOD="systemd"; else INSTALL_METHOD="docker"; fi
+    fi
     # Источник бинарей едет на GitLab всегда.
-    VERSION="latest"
+    if [ "${SEEN_VERSION:-0}" != 1 ]; then
+        VERSION="latest"
+    fi
     KCP_ARGS=""
     # PUBLIC_HOST/CONNECT из CLI (--host/--connect) уже применены parse_opts до
     # вызова команды и здесь не затираются.
@@ -1227,6 +1292,179 @@ legacy_read() {
     fi
 }
 
+# allowlist поколения control: сначала явный -clients-file из run.args, затем
+# $PREFIX/clients.json (ручная раскладка free-turn-control.sh), затем дефолт v1.
+# Пусто = авторизация выключена.
+control_clients_file() {
+    [ -n "${CTRL_CLIENTSFILE:-}" ] && [ -f "$CTRL_CLIENTSFILE" ] && { printf '%s' "$CTRL_CLIENTSFILE"; return 0; }
+    [ -f "$AUTH_DIR/clients.json" ] && { printf '%s' "$AUTH_DIR/clients.json"; return 0; }
+    [ -f "$PREFIX/clients/clients.json" ] && { printf '%s' "$PREFIX/clients/clients.json"; return 0; }
+    [ -f "$PREFIX/clients.json" ] && { printf '%s' "$PREFIX/clients.json"; return 0; }
+    return 1
+}
+
+# run.args поколения control: argv построчно ("-флаг" / "значение" парами,
+# встречается и "-флаг=значение"). Разбирает известные серверные флаги в
+# CTRL_*-переменные; неизвестное молча пропускает.
+control_read_runargs() {
+    CTRL_LISTEN=""; CTRL_CONNECT=""; CTRL_MODE=""; CTRL_OBF=""; CTRL_KEY=""; CTRL_CLIENTSFILE=""
+    local f="$PREFIX/run.args" line key val
+    [ -f "$f" ] || return 0
+    local toks=()
+    while IFS= read -r line || [ -n "$line" ]; do
+        # CR конца строк (редактировали из Windows) - не часть значений.
+        line=${line%$'\r'}
+        [ -n "$line" ] || continue
+        if [[ "$line" == -*=* ]]; then
+            toks+=("${line%%=*}" "${line#*=}")
+        else
+            toks+=("$line")
+        fi
+    done < "$f"
+    local i=0 n=${#toks[@]}
+    while [ "$i" -lt "$n" ]; do
+        key=${toks[$i]}; val=""
+        # Go-флаги обычно с одним дефисом; нормализуем --flag к -flag.
+        [[ "$key" == --* ]] && key="-${key#--}"
+        if [[ "$key" == -* ]]; then
+            if [ $((i + 1)) -lt "$n" ] && [[ "${toks[$((i + 1))]}" != -* ]]; then
+                val=${toks[$((i + 1))]}; i=$((i + 2))
+            else
+                i=$((i + 1))
+            fi
+            case "$key" in
+                -listen) CTRL_LISTEN=$val ;;
+                -connect) CTRL_CONNECT=$val ;;
+                -mode) CTRL_MODE=$val ;;
+                -obf-profile) CTRL_OBF=$val ;;
+                -obf-key) CTRL_KEY=$val ;;
+                -clients-file) CTRL_CLIENTSFILE=$val ;;
+            esac
+        else
+            i=$((i + 1))
+        fi
+    done
+}
+
+# Версия поколения control из $PREFIX/version (для dry-run; отсутствие - не ошибка).
+control_version() {
+    local f="$PREFIX/version"
+    [ -f "$f" ] || return 1
+    tr -d ' \r\n' < "$f" 2>/dev/null | grep -E -o 'v?[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.]+)?' | head -n1
+}
+
+# Читает установку поколения control и раскладывает по новым переменным.
+# Явно переданные CLI-флаги (SEEN_*) имеют приоритет над детектом.
+# Экспорт для dry-run: LEGACY_CLIENTS, LEGACY_PEERS, MIGRATE_*, LEGACY_VERSION.
+control_read() {
+    LEGACY_CLIENTS=0
+    LEGACY_PEERS=0
+    MIGRATE_MODE_CHANGED=0
+    MIGRATE_OBF_REUSED=0
+    MIGRATE_AUTH_WAS_OFF=0
+    MIGRATE_FRESH_IPS=1
+    LEGACY_VERSION=""
+    LEGACY_CLIENTS_FILE=""
+
+    control_read_runargs
+    LEGACY_VERSION=$(control_version || true)
+
+    local old_clients
+    old_clients=$(control_clients_file || true)
+    if [ -n "$old_clients" ]; then
+        LEGACY_CLIENTS_FILE="$old_clients"
+        LEGACY_CLIENTS=$(jq -r '.clients | length' "$old_clients" 2>/dev/null || echo 0)
+    else
+        MIGRATE_AUTH_WAS_OFF=1
+    fi
+
+    # BACKEND: отдельный WG-конф поколения control (обычно ft-wg0.conf) = new;
+    # -connect на чужой адрес = external. Явный --backend/--connect побеждает.
+    local adopted_wg=""
+    [ -f "$WG_CONF" ] && adopted_wg="$WG_CONF"
+    if [ "${SEEN_BACKEND:-0}" != 1 ] && [ "${SEEN_CONNECT:-0}" != 1 ]; then
+        if [ -n "$CTRL_CONNECT" ]; then
+            case "$CTRL_CONNECT" in
+                127.*:*|localhost:*|\[::1\]*)
+                    BACKEND="new"
+                    CONNECT="" ;;
+                *)
+                    BACKEND="external"
+                    CONNECT="$CTRL_CONNECT" ;;
+            esac
+        elif [ -n "$adopted_wg" ]; then
+            BACKEND="new"
+        else
+            BACKEND="new"
+        fi
+    fi
+
+    # Режим из run.args; tcp+new едет в udp (кроме явного --mode: тогда пусть
+    # validate_config честно откажет).
+    if [ "${SEEN_MODE:-0}" != 1 ]; then
+        if [ "$CTRL_MODE" = tcp ] && [ "$BACKEND" = new ]; then
+            PROXY_MODE="udp"
+            MIGRATE_MODE_CHANGED=1
+        elif [ -n "$CTRL_MODE" ]; then
+            PROXY_MODE="$CTRL_MODE"
+        fi
+    fi
+
+    # Listen-порт из -listen run.args (0.0.0.0:PORT).
+    if [ "${SEEN_LISTEN_PORT:-0}" != 1 ] && [[ "$CTRL_LISTEN" =~ :([0-9]{1,5})$ ]]; then
+        LISTEN_PORT="${BASH_REMATCH[1]}"
+    fi
+
+    # Обфускация из run.args: rtpopus -> rtpopus3 тем же ключом.
+    if [ "${SEEN_OBF_PROFILE:-0}" != 1 ] && [ -n "$CTRL_OBF" ]; then
+        OBF_PROFILE="$CTRL_OBF"
+    fi
+    if [ "${SEEN_OBF_KEY:-0}" != 1 ] && [ -n "$CTRL_KEY" ]; then
+        OBF_KEY="$CTRL_KEY"
+    fi
+    case "$OBF_PROFILE" in
+        rtpopus)
+            OBF_PROFILE="rtpopus3"
+            if legacy_obf_key >/dev/null; then MIGRATE_OBF_REUSED=1; else OBF_KEY=""; fi ;;
+        rtpopus2|rtpopus3)
+            legacy_obf_key >/dev/null && MIGRATE_OBF_REUSED=1 || OBF_KEY="" ;;
+        none) OBF_KEY="" ;;
+        *) OBF_PROFILE="none"; OBF_KEY="" ;;
+    esac
+
+    # WG-сеть - из усыновлённого конфига (его же и оставляем), порт - из
+    # -connect, иначе из конфига, иначе дефолт.
+    if [ "${SEEN_WG_NET:-0}" != 1 ]; then
+        WG_NET="10.13.13.0/24"
+        if [ -n "$adopted_wg" ]; then
+            WG_NET=$(wg_conf_net 2>/dev/null || echo "10.13.13.0/24")
+            [ -n "$WG_NET" ] || WG_NET="10.13.13.0/24"
+        fi
+    fi
+    if [ "${SEEN_WG_PORT:-0}" != 1 ]; then
+        WG_PORT="51820"
+        if [[ "$CTRL_CONNECT" =~ :([0-9]{1,5})$ ]] && [ "$BACKEND" = new ]; then
+            WG_PORT="${BASH_REMATCH[1]}"
+        elif [ -n "$adopted_wg" ]; then
+            WG_PORT=$(wg_conf_get ListenPort 2>/dev/null || echo "51820")
+            valid_port "$WG_PORT" || WG_PORT="51820"
+        fi
+    fi
+    if [ "$WG_PORT" = "$LISTEN_PORT" ]; then WG_PORT="51820"; fi
+
+    if [ "${SEEN_METHOD:-0}" != 1 ]; then
+        if [ -f "$UNIT_FILE" ]; then INSTALL_METHOD="systemd"; else INSTALL_METHOD="docker"; fi
+    fi
+    if [ "${SEEN_VERSION:-0}" != 1 ]; then
+        VERSION="latest"
+    fi
+    KCP_ARGS=""
+
+    if [ -n "$adopted_wg" ]; then
+        LEGACY_PEERS=$(grep -c '^\[Peer\]' "$adopted_wg" 2>/dev/null || echo 0)
+    fi
+}
+
 # Импорт клиентов старого clients.json с ТЕМИ ЖЕ client_id (иначе старые
 # freeturn://-ссылки не пройдут allowlist) и по возможности теми же WG-IP.
 # Ключи WireGuard перевыпускаются (приватники клиентов на сервере не хранятся):
@@ -1238,13 +1476,18 @@ migrate_import_peers() {
     [ -n "$old_clients" ] && [ -f "$old_clients" ] || { clients_links_write; return 0; }
 
     # Карта pubkey -> ip из старого wg0.conf: IP переиспользуем, ключи - нет.
+    # Для поколения control (MIGRATE_FRESH_IPS=1) позиционное соответствие
+    # бессмысленно (чужие ft-user блоки остаются как есть), всем выдаём свежие IP.
     pubmap=$(mktemp)
-    awk '/^\[Peer\]/{pub="";ip=""} /^PublicKey[[:space:]]*=/{pub=$3} /^AllowedIPs[[:space:]]*=/{split($3,a,"[/,]");ip=a[1]} pub!=""&&ip!=""{print pub" "ip;pub="";ip=""}' \
-        "$legacy_wg" > "$pubmap" 2>/dev/null || true
+    if [ "${MIGRATE_FRESH_IPS:-0}" != 1 ]; then
+        awk '/^\[Peer\]/{pub="";ip=""} /^PublicKey[[:space:]]*=/{pub=$3} /^AllowedIPs[[:space:]]*=/{split($3,a,"[/,]");ip=a[1]} pub!=""&&ip!=""{print pub" "ip;pub="";ip=""}' \
+            "$legacy_wg" > "$pubmap" 2>/dev/null || true
+    fi
 
     while IFS=$'\t' read -r cid comment; do
         [ -n "$cid" ] || continue
-        name=$(printf '%s' "$comment" | tr -c 'A-Za-z0-9._-' '_' | sed 's/^[^A-Za-z0-9]*/c/' | cut -c1-32)
+        # Один ведущий не-алфанумерик -> 'c' (пустое совпадение * препендило бы 'c' всем).
+        name=$(printf '%s' "$comment" | tr -c 'A-Za-z0-9._-' '_' | sed 's/^[^A-Za-z0-9]/c/' | cut -c1-32)
         valid_name "$name" || name="client-$idx"
         # clients_sync уже создал хозяина со свежим cid: сносим его, legacy cid важнее.
         if meta_has "$name"; then
@@ -1297,13 +1540,31 @@ migrate_backup() {
     ts=$(date '+%Y%m%d-%H%M%S')
     MIGRATE_BACKUP="/root/freeturn-v4-backup-$ts.tgz"
     legacy_wg=$(legacy_wg_conf || true)
-    # shellcheck disable=SC2086
-    tar -czf "$MIGRATE_BACKUP" \
-        ${CONF_FILE:+$CONF_FILE} \
-        ${LEGACY_CLIENTS_FILE:+$LEGACY_CLIENTS_FILE} \
-        ${legacy_wg:+$legacy_wg} \
-        "$PREFIX/clients" "$PREFIX/auth" 2>/dev/null || \
-        tar -czf "$MIGRATE_BACKUP" "$PREFIX" ${legacy_wg} 2>/dev/null || \
+    # Явный список вместо $PREFIX целиком: бэкап должен содержать и файлы ВНЕ
+    # него (юнит, усыновлённый WG-конф), и не тащить мусор.
+    local members=()
+    [ -f "$CONF_FILE" ] && members+=("$CONF_FILE")
+    [ -n "${LEGACY_CLIENTS_FILE:-}" ] && [ -f "$LEGACY_CLIENTS_FILE" ] && members+=("$LEGACY_CLIENTS_FILE")
+    [ -n "$legacy_wg" ] && [ -f "$legacy_wg" ] && members+=("$legacy_wg")
+    [ -f "$UNIT_FILE" ] && members+=("$UNIT_FILE")
+    [ -f "$ENVFILE" ] && members+=("$ENVFILE")
+    local f
+    for f in launch.sh run.args run.env owner.cid version state control.lock peers.lock wireguard-client.conf clients.json; do
+        [ -f "$PREFIX/$f" ] && members+=("$PREFIX/$f")
+    done
+    local b
+    for b in "$PREFIX"/server-linux-*; do
+        [ -f "$b" ] && members+=("$b")
+    done
+    [ -d "$PREFIX/clients" ] && members+=("$PREFIX/clients")
+    [ -d "$PREFIX/auth" ] && members+=("$PREFIX/auth")
+    [ -d "$PREFIX/share" ] && members+=("$PREFIX/share")
+    if [ "${#members[@]}" -gt 0 ] && tar -czf "$MIGRATE_BACKUP" "${members[@]}" 2>/dev/null; then
+        chmod 0600 "$MIGRATE_BACKUP"
+        return 0
+    fi
+    # Последний шанс: весь PREFIX целиком.
+    tar -czf "$MIGRATE_BACKUP" "$PREFIX" ${legacy_wg:+"$legacy_wg"} 2>/dev/null || \
         fail internal "не удалось создать бэкап $MIGRATE_BACKUP"
     chmod 0600 "$MIGRATE_BACKUP"
 }
@@ -1311,6 +1572,12 @@ migrate_backup() {
 migrate_rollback() {
     log_error "Откат из $MIGRATE_BACKUP"
     tar -xzf "$MIGRATE_BACKUP" -C / 2>/dev/null || true
+    if [ "${BACKEND:-}" = new ] && [ -f "$WG_CONF" ]; then
+        systemctl daemon-reload >/dev/null 2>&1 || true
+        systemctl restart "wg-quick@$WG_IFACE" >/dev/null 2>&1 || \
+            systemctl start "wg-quick@$WG_IFACE" >/dev/null 2>&1 || true
+    fi
+    systemctl daemon-reload >/dev/null 2>&1 || true
     ft_restart 2>/dev/null || true
 }
 
@@ -1326,6 +1593,14 @@ migrate_cleanup_legacy() {
     fi
     # Одиночный клиентский конфиг v4 (ключи перевыпущены, см. migrate_import_peers).
     rm -f "$PREFIX/wireguard-client.conf"
+    # Артефакты поколения control (их содержимое переехало в новый формат).
+    if [ "${MIGRATE_KIND:-}" = control ]; then
+        rm -f "$PREFIX/launch.sh" "$PREFIX/run.args" "$PREFIX/run.env" \
+            "$PREFIX/owner.cid" "$PREFIX/version" "$PREFIX/state" \
+            "$PREFIX/control.lock" "$PREFIX/peers.lock"
+        rm -f "$PREFIX"/server-linux-*
+        [ -d "$PREFIX/share" ] && rm -rf "$PREFIX/share"
+    fi
     # Старый allowlist: сервер его больше не читает (см. $CLIENTSFILE).
     if [ -n "${LEGACY_CLIENTS_FILE:-}" ] && [ "$LEGACY_CLIENTS_FILE" != "$CLIENTSFILE" ]; then
         rm -f "$LEGACY_CLIENTS_FILE"
@@ -1511,25 +1786,38 @@ cmd_uninstall() {
 
 # Миграция v4 -> v5 одной транзакцией: dry-run (--dry-run) только читает и
 # отдаёт маппинг; без флага - бэкап, стоп старого стека, apply с GitLab,
-# импорт клиентов/пиров с теми же client_id, verify. Идемпотентна: повтор на
-# уже новом формате возвращает already_migrated.
+# импорт клиентов/пиров с теми же client_id, verify. Поддерживает поколения
+# v1 (install.conf без BACKEND=) и control (free-turn-control.sh: launch.sh +
+# run.args без install.conf). Идемпотентна: повтор на уже новом формате
+# возвращает already_migrated; на чистом хосте - not_installed.
 cmd_migrate() {
     stage migrate
     require_root
     ensure_base_deps
-    if ! legacy_detect; then
+    MIGRATE_KIND=$(detect_kind)
+    if [ "$MIGRATE_KIND" = v5 ]; then
         d_bool migrated false
         d_str reason "already_migrated"
+        d_str kind "v5"
         if [ -f "$CONF_FILE" ]; then
             d_raw config "$(config_json)"
         fi
         ok
         return 0
     fi
-    legacy_read
+    if [ "$MIGRATE_KIND" = none ]; then
+        fail not_installed "на хосте нет установки FreeTurn - используйте install"
+    fi
+    if [ "$MIGRATE_KIND" = v1 ]; then
+        legacy_read
+    else
+        control_read
+    fi
     if [ "$DRY_RUN" = 1 ]; then
         d_bool migrated false
         d_bool dry_run true
+        d_str kind "$MIGRATE_KIND"
+        d_str legacy_version "$LEGACY_VERSION"
         d_str backend "$BACKEND"
         d_str connect "$CONNECT"
         d_str mode "$PROXY_MODE"
@@ -1554,6 +1842,11 @@ cmd_migrate() {
     if [ -n "$(legacy_wg_conf || true)" ]; then
         systemctl disable --now "wg-quick@$LEGACY_WG_IFACE" >/dev/null 2>&1 || true
     fi
+    # Усыновлённый WG поколения control: гасим перед apply (wg_apply его
+    # перезапустит); сам конфиг и ключ сервера при этом сохраняются.
+    if [ "$MIGRATE_KIND" = control ] && [ "$BACKEND" = new ] && [ -f "$WG_CONF" ]; then
+        systemctl stop "wg-quick@$WG_IFACE" >/dev/null 2>&1 || true
+    fi
     if ! apply_config; then
         migrate_rollback
         fail start_failed "миграция не удалась - откат из $MIGRATE_BACKUP выполнен"
@@ -1573,6 +1866,8 @@ cmd_migrate() {
     fi
     migrate_cleanup_legacy
     d_bool migrated true
+    d_str kind "$MIGRATE_KIND"
+    d_str legacy_version "$LEGACY_VERSION"
     d_str backup "$MIGRATE_BACKUP"
     d_str backend "$BACKEND"
     d_str mode "$PROXY_MODE"
@@ -1599,18 +1894,18 @@ parse_opts() {
     while [ $# -gt 0 ]; do
         a=$1 v=${1#*=}
         case "$a" in
-            --method=*)      INSTALL_METHOD=$v ;;
-            --backend=*)     BACKEND=$v ;;
-            --connect=*)     CONNECT=$v; valid_hostport "$v" || fail bad_arg "connect: host:port | [ipv6]:port" ;;
-            --host=*)        PUBLIC_HOST=$v; valid_host "$v" || fail bad_arg "host: имя или IP" ;;
-            --listen-port=*) LISTEN_PORT=$v ;;
-            --wg-port=*)     WG_PORT=$v ;;
-            --wg-net=*)      WG_NET=$v ;;
-            --mode=*)        PROXY_MODE=$v ;;
-            --obf-profile=*) OBF_PROFILE=$v ;;
-            --obf-key=*)     OBF_KEY=$v; valid_hex64 "$v" || fail bad_arg "obf-key: 64 hex-символа" ;;
-            --version=*)     VERSION=$v ;;
-            --bin=*)         LOCAL_BIN=$v; VERSION=local ;;
+            --method=*)      INSTALL_METHOD=$v; SEEN_METHOD=1 ;;
+            --backend=*)     BACKEND=$v; SEEN_BACKEND=1 ;;
+            --connect=*)     CONNECT=$v; SEEN_CONNECT=1; valid_hostport "$v" || fail bad_arg "connect: host:port | [ipv6]:port" ;;
+            --host=*)        PUBLIC_HOST=$v; SEEN_HOST=1; valid_host "$v" || fail bad_arg "host: имя или IP" ;;
+            --listen-port=*) LISTEN_PORT=$v; SEEN_LISTEN_PORT=1 ;;
+            --wg-port=*)     WG_PORT=$v; SEEN_WG_PORT=1 ;;
+            --wg-net=*)      WG_NET=$v; SEEN_WG_NET=1 ;;
+            --mode=*)        PROXY_MODE=$v; SEEN_MODE=1 ;;
+            --obf-profile=*) OBF_PROFILE=$v; SEEN_OBF_PROFILE=1 ;;
+            --obf-key=*)     OBF_KEY=$v; SEEN_OBF_KEY=1; valid_hex64 "$v" || fail bad_arg "obf-key: 64 hex-символа" ;;
+            --version=*)     VERSION=$v; SEEN_VERSION=1 ;;
+            --bin=*)         LOCAL_BIN=$v; VERSION=local; SEEN_VERSION=1 ;;
             --web-port=*)    FT_WEB_PORT=$v ;;
             --web-ttl=*)     FT_WEB_TTL=$v ;;
             --kcp-nodelay=*|--kcp-interval=*|--kcp-resend=*|--kcp-nc=*|--kcp-sndwnd=*|--kcp-rcvwnd=*|--kcp-mtu=*)

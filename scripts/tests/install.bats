@@ -503,7 +503,10 @@ EOF
     need_jq
     legacy_fixture
     LEGACY_WG_CONF="$FT_WG_DIR/wg0.conf"
-    out=$(LEGACY_WG_CONF="$FT_WG_DIR/wg0.conf" bash "$SCRIPT" migrate --dry-run)
+    require_root() { return 0; }
+    ensure_base_deps() { return 0; }
+    _IS_RPC=1
+    out=$(DRY_RUN=1 cmd_migrate)
     [ "$(jq -r .result <<< "$out")" = ok ]
     [ "$(jq -r .data.backend <<< "$out")" = new ]
     [ "$(jq -r .data.obf_profile <<< "$out")" = rtpopus3 ]
@@ -516,11 +519,23 @@ EOF
 
 @test "migrate: повтор на новом формате -> already_migrated" {
     need_jq
+    require_root() { return 0; }
+    ensure_base_deps() { return 0; }
+    _IS_RPC=1
     BACKEND=new CONNECT="" PUBLIC_HOST=203.0.113.7 PROXY_MODE=udp \
         LISTEN_PORT=56000 WG_PORT=51820 WG_NET=10.13.13.0/24 \
         OBF_PROFILE=rtpopus3 OBF_KEY="$(printf 'b%.0s' {1..64})" VERSION=latest save_config
-    out=$(bash "$SCRIPT" migrate --dry-run)
+    out=$(cmd_migrate)
     [ "$(jq -r .data.reason <<< "$out")" = already_migrated ]
+}
+
+@test "migrate: чистый хост -> not_installed, а не already_migrated" {
+    require_root() { return 0; }
+    ensure_base_deps() { return 0; }
+    _IS_RPC=1
+    run cmd_migrate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *'"code":"not_installed"'* ]]
 }
 
 @test "migrate: import пиров сохраняет client_id и IP из wg0" {
@@ -574,4 +589,176 @@ EOF
 @test "диспетчер знает migrate" {
     is_rpc_command migrate
     declare -F cmd_migrate >/dev/null
+}
+
+control_fixture() {
+    # Поколение free-turn-control.sh: install.conf нет, есть launch.sh/run.args.
+    rm -f "$CONF_FILE"
+    cat > "$PREFIX/run.args" <<EOF
+-listen
+0.0.0.0:56016
+-connect
+127.0.0.1:51554
+-mode
+udp
+-obf-profile
+rtpopus
+-obf-key
+$(printf 'b%.0s' {1..64})
+-clients-file
+$PREFIX/clients.json
+EOF
+    printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' > "$PREFIX/owner.cid"
+    printf 'v1.8.0\n' > "$PREFIX/version"
+    printf '#!/bin/bash\n' > "$PREFIX/launch.sh"
+    cat > "$PREFIX/clients.json" <<'EOF'
+{"clients":{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa":{"comment":"owner"},"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb":{"comment":"phone"}}}
+EOF
+    cat > "$WG_CONF" <<'EOF'
+[Interface]
+# managed-by: free-turn-proxy
+Address = 10.13.13.1/24
+ListenPort = 51554
+MTU = 1280
+PrivateKey = c2VydmVyLXByaXZhdGUta2V5LXRlc3QtZml4dHVyZS0wMTIzNA==
+
+[Peer]
+# owner (client conf: /opt/free-turn-proxy/wireguard-client.conf)
+PublicKey = c2VydmVyLXB1YmxpYy1rZXktdGVzdC1maXh0dXJlLTAxMjM0NQ==
+AllowedIPs = 10.13.13.2/32
+
+[Peer]
+# ft-user: cGhvbmU=
+PublicKey = Y2xpZW50LXB1YmxpYy1rZXktdGVzdC1maXh0dXJlLWFiY2RlZg==
+AllowedIPs = 10.13.13.3/32
+EOF
+}
+
+@test "migrate: detect_kind различает v5/v1/control/none" {
+    [ "$(detect_kind)" = none ]
+    legacy_fixture
+    [ "$(detect_kind)" = v1 ]
+    BACKEND=new CONNECT="" PUBLIC_HOST=203.0.113.7 PROXY_MODE=udp \
+        LISTEN_PORT=56000 WG_PORT=51820 WG_NET=10.13.13.0/24 \
+        OBF_PROFILE=rtpopus3 OBF_KEY=x VERSION=latest save_config
+    [ "$(detect_kind)" = v5 ]
+    rm -f "$CONF_FILE"
+    printf '#!/bin/bash\n' > "$PREFIX/launch.sh"
+    [ "$(detect_kind)" = control ]
+}
+
+@test "migrate: control_read_runargs парсит argv построчно и -k=v" {
+    cat > "$PREFIX/run.args" <<'EOF'
+-listen
+0.0.0.0:56016
+-connect=127.0.0.1:51554
+-mode
+udp
+-obf-profile
+rtpopus
+-obf-key
+abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789
+-clients-file
+/tmp/x/clients.json
+EOF
+    control_read_runargs
+    [ "$CTRL_LISTEN" = 0.0.0.0:56016 ]
+    [ "$CTRL_CONNECT" = 127.0.0.1:51554 ]
+    [ "$CTRL_MODE" = udp ]
+    [ "$CTRL_OBF" = rtpopus ]
+    [ "$CTRL_KEY" = abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789 ]
+    [ "$CTRL_CLIENTSFILE" = /tmp/x/clients.json ]
+}
+
+@test "migrate: control_read маппит control-поколение из живых файлов" {
+    need_jq
+    control_fixture
+    control_read
+    [ "$BACKEND" = new ]
+    [ "$PROXY_MODE" = udp ]
+    [ "$LISTEN_PORT" = 56016 ]
+    [ "$WG_PORT" = 51554 ]
+    [ "$WG_NET" = 10.13.13.0/24 ]
+    [ "$OBF_PROFILE" = rtpopus3 ]
+    [ "$OBF_KEY" = "$(printf 'b%.0s' {1..64})" ]
+    [ "$MIGRATE_OBF_REUSED" = 1 ]
+    [ "$MIGRATE_MODE_CHANGED" = 0 ]
+    [ "$LEGACY_CLIENTS" = 2 ]
+    [ "$LEGACY_PEERS" = 2 ]
+    [ "$LEGACY_VERSION" = v1.8.0 ]
+    [ "$MIGRATE_FRESH_IPS" = 1 ]
+    [ "$VERSION" = latest ]
+}
+
+@test "migrate: явные CLI-флаги побеждают детект" {
+    need_jq
+    control_fixture
+    parse_opts --listen-port=56099 --obf-profile=none
+    control_read
+    [ "$LISTEN_PORT" = 56099 ]
+    [ "$OBF_PROFILE" = none ]
+    [ "$OBF_KEY" = "" ]
+    [ "$BACKEND" = new ]
+}
+
+@test "migrate: control dry-run показывает kind и версию поколения" {
+    need_jq
+    control_fixture
+    require_root() { return 0; }
+    ensure_base_deps() { return 0; }
+    _IS_RPC=1
+    out=$(DRY_RUN=1 cmd_migrate)
+    [ "$(jq -r .result <<< "$out")" = ok ]
+    [ "$(jq -r .data.kind <<< "$out")" = control ]
+    [ "$(jq -r .data.legacy_version <<< "$out")" = v1.8.0 ]
+    [ "$(jq -r .data.listen_port <<< "$out")" = 56016 ]
+    [ "$(jq -r .data.legacy_clients <<< "$out")" = 2 ]
+}
+
+@test "migrate: import control сохраняет старые блоки и выдаёт свежие IP" {
+    need_jq
+    control_fixture
+    control_read
+    BACKEND=new WG_NET=10.13.13.0/24 PUBLIC_HOST=203.0.113.7
+    auth_init
+    clients_sync
+    migrate_import_peers "$WG_CONF" "$PREFIX/clients.json"
+    # legacy cid вытеснили свежие; IP новые (.2/.3 заняты старыми блоками)
+    [ "$(meta_get owner | cut -d'|' -f2)" = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ]
+    [ "$(meta_get phone | cut -d'|' -f2)" = bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ]
+    [ "$(meta_get owner | cut -d'|' -f3)" = 10.13.13.4 ]
+    [ "$(meta_get phone | cut -d'|' -f3)" = 10.13.13.5 ]
+    [ "$(jq -r '.clients | length' "$CLIENTSFILE")" = 2 ]
+    # старые блоки на месте (старые конфиги продолжают работать)
+    grep -q '# ft-user: cGhvbmU=' "$WG_CONF"
+    grep -q 'AllowedIPs = 10.13.13.3/32' "$WG_CONF"
+    grep -q 'PrivateKey = c2VydmVyLXByaXZhdGUta2V5LXRlc3QtZml4dHVyZS0wMTIzNA==' "$WG_CONF"
+    # новые блоки рядом, конфиги для расшаривания есть
+    grep -q '# ft-client: phone' "$WG_CONF"
+    [ -f "$(client_conf_file phone)" ]
+    json=$(decode_uri "$(cat "$(client_dir phone)/phone.link")")
+    [[ "$json" == *'"obf":"rtpopus3"'* ]]
+    [[ "$json" == *'"cid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"'* ]]
+}
+
+@test "migrate: cleanup сносит артефакты control-поколения" {
+    control_fixture
+    printf '#!/bin/bash\n' > "$PREFIX/launch.sh"
+    printf 'x\n' > "$PREFIX/run.env"
+    printf 'v1.8.0\n' > "$PREFIX/state"
+    : > "$PREFIX/control.lock"
+    printf '[Interface]\n' > "$PREFIX/wireguard-client.conf"
+    printf 'ELF' > "$PREFIX/server-linux-amd64"
+    mkdir -p "$PREFIX/share"
+    MIGRATE_KIND=control
+    LEGACY_CLIENTS_FILE="$PREFIX/clients.json"
+    auth_init
+    migrate_cleanup_legacy
+    for f in launch.sh run.args run.env owner.cid version state control.lock wireguard-client.conf server-linux-amd64 clients.json; do
+        [ ! -e "$PREFIX/$f" ] || return 1
+    done
+    [ ! -d "$PREFIX/share" ]
+    # усыновлённый WG-конф и новый allowlist целы
+    grep -q '# ft-user: cGhvbmU=' "$WG_CONF"
+    [ -f "$CLIENTSFILE" ]
 }
