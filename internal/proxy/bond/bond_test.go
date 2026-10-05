@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/samosvalishe/free-turn-proxy/internal/stats"
+	"gitlab.com/freeturn/free-turn-proxy/internal/stats"
 	"github.com/xtaci/smux"
 )
 

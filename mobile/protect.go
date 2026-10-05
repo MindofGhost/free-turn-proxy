@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"syscall"
 
-	"github.com/samosvalishe/free-turn-proxy/internal/netctl"
+	"gitlab.com/freeturn/free-turn-proxy/internal/netctl"
 )
 
 // Protector реализуется хостом для исключения сокетов клиента из VPN-туннеля (VpnService.protect).

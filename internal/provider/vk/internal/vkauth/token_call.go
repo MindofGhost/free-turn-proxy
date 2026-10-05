@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/samosvalishe/free-turn-proxy/internal/provider/vk/internal/browserprofile"
-	"github.com/samosvalishe/free-turn-proxy/internal/provider/vk/internal/captcha"
+	"gitlab.com/freeturn/free-turn-proxy/internal/provider/vk/internal/browserprofile"
+	"gitlab.com/freeturn/free-turn-proxy/internal/provider/vk/internal/captcha"
 
 	tlsclient "github.com/bogdanfinn/tls-client"
 )

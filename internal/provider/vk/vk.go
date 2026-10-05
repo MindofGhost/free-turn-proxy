@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/samosvalishe/free-turn-proxy/internal/logx"
-	"github.com/samosvalishe/free-turn-proxy/internal/provider"
-	"github.com/samosvalishe/free-turn-proxy/internal/provider/vk/internal/browserprofile"
-	"github.com/samosvalishe/free-turn-proxy/internal/provider/vk/internal/captcha"
-	manualcaptcha "github.com/samosvalishe/free-turn-proxy/internal/provider/vk/internal/captcha/manual"
-	"github.com/samosvalishe/free-turn-proxy/internal/provider/vk/internal/vkauth"
-	"github.com/samosvalishe/free-turn-proxy/internal/statedir"
+	"gitlab.com/freeturn/free-turn-proxy/internal/logx"
+	"gitlab.com/freeturn/free-turn-proxy/internal/provider"
+	"gitlab.com/freeturn/free-turn-proxy/internal/provider/vk/internal/browserprofile"
+	"gitlab.com/freeturn/free-turn-proxy/internal/provider/vk/internal/captcha"
+	manualcaptcha "gitlab.com/freeturn/free-turn-proxy/internal/provider/vk/internal/captcha/manual"
+	"gitlab.com/freeturn/free-turn-proxy/internal/provider/vk/internal/vkauth"
+	"gitlab.com/freeturn/free-turn-proxy/internal/statedir"
 )
 
 type Config struct {

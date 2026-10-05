@@ -4,7 +4,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/samosvalishe/free-turn-proxy/internal/provider"
+	"gitlab.com/freeturn/free-turn-proxy/internal/provider"
 )
 
 type VKCredentials struct {

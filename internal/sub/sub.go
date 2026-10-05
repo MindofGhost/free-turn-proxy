@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/samosvalishe/free-turn-proxy/internal/client/dnsdial"
-	"github.com/samosvalishe/free-turn-proxy/internal/logx"
-	"github.com/samosvalishe/free-turn-proxy/internal/uri"
+	"gitlab.com/freeturn/free-turn-proxy/internal/client/dnsdial"
+	"gitlab.com/freeturn/free-turn-proxy/internal/logx"
+	"gitlab.com/freeturn/free-turn-proxy/internal/uri"
 )
 
 var logHolder logx.Holder

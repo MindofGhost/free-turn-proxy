@@ -11,17 +11,17 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/samosvalishe/free-turn-proxy/internal/client/dnsdial"
-	"github.com/samosvalishe/free-turn-proxy/internal/config"
-	"github.com/samosvalishe/free-turn-proxy/internal/logx"
-	"github.com/samosvalishe/free-turn-proxy/internal/provider/vk"
-	"github.com/samosvalishe/free-turn-proxy/internal/proxy/tcprelay"
-	"github.com/samosvalishe/free-turn-proxy/internal/proxy/udprelay"
-	"github.com/samosvalishe/free-turn-proxy/internal/routemgr"
-	"github.com/samosvalishe/free-turn-proxy/internal/safego"
-	"github.com/samosvalishe/free-turn-proxy/internal/stats"
-	"github.com/samosvalishe/free-turn-proxy/internal/transport/dtlsdial"
-	"github.com/samosvalishe/free-turn-proxy/internal/wake"
+	"gitlab.com/freeturn/free-turn-proxy/internal/client/dnsdial"
+	"gitlab.com/freeturn/free-turn-proxy/internal/config"
+	"gitlab.com/freeturn/free-turn-proxy/internal/logx"
+	"gitlab.com/freeturn/free-turn-proxy/internal/provider/vk"
+	"gitlab.com/freeturn/free-turn-proxy/internal/proxy/tcprelay"
+	"gitlab.com/freeturn/free-turn-proxy/internal/proxy/udprelay"
+	"gitlab.com/freeturn/free-turn-proxy/internal/routemgr"
+	"gitlab.com/freeturn/free-turn-proxy/internal/safego"
+	"gitlab.com/freeturn/free-turn-proxy/internal/stats"
+	"gitlab.com/freeturn/free-turn-proxy/internal/transport/dtlsdial"
+	"gitlab.com/freeturn/free-turn-proxy/internal/wake"
 )
 
 // Phase - текущая стадия подключения сессии.

@@ -12,17 +12,17 @@ import (
 	"time"
 
 	"github.com/pion/dtls/v3"
-	"github.com/samosvalishe/free-turn-proxy/internal/clientsdb"
-	"github.com/samosvalishe/free-turn-proxy/internal/config"
-	"github.com/samosvalishe/free-turn-proxy/internal/logx"
-	"github.com/samosvalishe/free-turn-proxy/internal/proxy/bond"
-	"github.com/samosvalishe/free-turn-proxy/internal/proxy/tcpserver"
-	"github.com/samosvalishe/free-turn-proxy/internal/proxy/udpserver"
-	"github.com/samosvalishe/free-turn-proxy/internal/safego"
-	"github.com/samosvalishe/free-turn-proxy/internal/shutdown"
-	"github.com/samosvalishe/free-turn-proxy/internal/transport/dtlsdial"
-	"github.com/samosvalishe/free-turn-proxy/internal/wire"
-	"github.com/samosvalishe/free-turn-proxy/internal/wire/rtpopus"
+	"gitlab.com/freeturn/free-turn-proxy/internal/clientsdb"
+	"gitlab.com/freeturn/free-turn-proxy/internal/config"
+	"gitlab.com/freeturn/free-turn-proxy/internal/logx"
+	"gitlab.com/freeturn/free-turn-proxy/internal/proxy/bond"
+	"gitlab.com/freeturn/free-turn-proxy/internal/proxy/tcpserver"
+	"gitlab.com/freeturn/free-turn-proxy/internal/proxy/udpserver"
+	"gitlab.com/freeturn/free-turn-proxy/internal/safego"
+	"gitlab.com/freeturn/free-turn-proxy/internal/shutdown"
+	"gitlab.com/freeturn/free-turn-proxy/internal/transport/dtlsdial"
+	"gitlab.com/freeturn/free-turn-proxy/internal/wire"
+	"gitlab.com/freeturn/free-turn-proxy/internal/wire/rtpopus"
 )
 
 // version is populated at build time via -ldflags "-X main.version=...".

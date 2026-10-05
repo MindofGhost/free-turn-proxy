@@ -3,8 +3,8 @@ package main
 import (
 	"testing"
 
-	"github.com/samosvalishe/free-turn-proxy/internal/clientsdb"
-	"github.com/samosvalishe/free-turn-proxy/internal/config"
+	"gitlab.com/freeturn/free-turn-proxy/internal/clientsdb"
+	"gitlab.com/freeturn/free-turn-proxy/internal/config"
 )
 
 func TestAdmitTCPAndBond(t *testing.T) {

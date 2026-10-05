@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/samosvalishe/free-turn-proxy/internal/provider/vk/internal/browserprofile"
+	"gitlab.com/freeturn/free-turn-proxy/internal/provider/vk/internal/browserprofile"
 
 	tlsclient "github.com/bogdanfinn/tls-client"
 )

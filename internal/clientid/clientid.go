@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/samosvalishe/free-turn-proxy/internal/statedir"
+	"gitlab.com/freeturn/free-turn-proxy/internal/statedir"
 )
 
 const fileName = "client_config.json"

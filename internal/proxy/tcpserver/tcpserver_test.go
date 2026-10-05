@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/samosvalishe/free-turn-proxy/internal/logx"
-	"github.com/samosvalishe/free-turn-proxy/internal/netconn"
-	"github.com/samosvalishe/free-turn-proxy/internal/transport/kcpmux"
+	"gitlab.com/freeturn/free-turn-proxy/internal/logx"
+	"gitlab.com/freeturn/free-turn-proxy/internal/netconn"
+	"gitlab.com/freeturn/free-turn-proxy/internal/transport/kcpmux"
 	"github.com/xtaci/smux"
 )
 

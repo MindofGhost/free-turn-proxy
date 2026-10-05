@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/samosvalishe/free-turn-proxy/internal/randx"
+	"gitlab.com/freeturn/free-turn-proxy/internal/randx"
 )
 
 // MultiSplitWriteConn разбивает первый Write ClientHello на несколько TCP-сегментов, разрезая SNI.

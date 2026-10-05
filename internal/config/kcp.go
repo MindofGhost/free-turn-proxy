@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/samosvalishe/free-turn-proxy/internal/transport/kcpmux"
+	"gitlab.com/freeturn/free-turn-proxy/internal/transport/kcpmux"
 )
 
 // KCPOpts - параметры ARQ-слоя tcp-режима; в udp-режиме не используются.

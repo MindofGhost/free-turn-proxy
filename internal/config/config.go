@@ -4,7 +4,7 @@ package config
 import (
 	"time"
 
-	"github.com/samosvalishe/free-turn-proxy/internal/tunnel"
+	"gitlab.com/freeturn/free-turn-proxy/internal/tunnel"
 )
 
 type TURNOpts struct {

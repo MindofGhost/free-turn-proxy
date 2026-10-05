@@ -1,9 +1,9 @@
 package config
 
 import (
-	"github.com/samosvalishe/free-turn-proxy/internal/client/dnsdial"
-	"github.com/samosvalishe/free-turn-proxy/internal/transport/kcpmux"
-	"github.com/samosvalishe/free-turn-proxy/internal/tunnel"
+	"gitlab.com/freeturn/free-turn-proxy/internal/client/dnsdial"
+	"gitlab.com/freeturn/free-turn-proxy/internal/transport/kcpmux"
+	"gitlab.com/freeturn/free-turn-proxy/internal/tunnel"
 )
 
 const (

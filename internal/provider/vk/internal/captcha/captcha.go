@@ -18,9 +18,9 @@ import (
 	fhttp "github.com/bogdanfinn/fhttp"
 	tlsclient "github.com/bogdanfinn/tls-client"
 
-	"github.com/samosvalishe/free-turn-proxy/internal/logx"
-	"github.com/samosvalishe/free-turn-proxy/internal/provider/vk/internal/browserprofile"
-	"github.com/samosvalishe/free-turn-proxy/internal/randx"
+	"gitlab.com/freeturn/free-turn-proxy/internal/logx"
+	"gitlab.com/freeturn/free-turn-proxy/internal/provider/vk/internal/browserprofile"
+	"gitlab.com/freeturn/free-turn-proxy/internal/randx"
 )
 
 var logHolder logx.Holder
