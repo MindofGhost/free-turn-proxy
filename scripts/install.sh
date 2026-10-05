@@ -83,10 +83,16 @@ TARGET="all"
 TAIL=80
 NAME=""
 KCP_SET=0
+DRY_RUN=0
 PREV_LISTEN_PORT=""
 PREV_SHARE=""
 PEER_IP=""
 PEER_PUB=""
+# Миграция v4 (GitHub) -> v5 (GitLab): пути старого установщика.
+LEGACY_WG_IFACE="wg0"
+LEGACY_WG_CONF="${FT_WG_DIR:-/etc/wireguard}/$LEGACY_WG_IFACE.conf"
+LEGACY_WG_CONF_FALLBACK="/etc/wireguard/$LEGACY_WG_IFACE.conf"
+MIGRATE_BACKUP=""
 
 PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
 export PATH
@@ -1105,9 +1111,244 @@ do_uninstall() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Миграция v4 (GitHub, install.sh без RPC) -> v5 (GitLab, proto 3).
+# Старый конфиг лежит в том же $PREFIX/install.conf, но с другими ключами:
+#   VERSION, PROVIDER, PROXY_MODE, BACKEND_PORT, LISTEN_PORT,
+#   OBF_PROFILE (rtpopus|none), OBF_KEY, CLIENTS_FILE_CONF (пусто = auth выкл),
+#   WG_SETUP (1 = поднять wg0 на BACKEND_PORT).
+# clients.json обеих версий - {"clients":{id:{comment:name}}}, копируется как есть;
+# clients.list/per-client dirs нового формата пересобираются с теми же client_id,
+# поэтому старые freeturn://-ссылки (v=1) продолжают авторизовываться.
+# Старый wg0 (10.13.13.0/24) гасится ДО создания ft-wg0: та же подсеть иначе даст
+# subnet_conflict в wg_apply.
+
+legacy_wg_conf() {
+    [ -f "$LEGACY_WG_CONF" ] && { printf '%s' "$LEGACY_WG_CONF"; return 0; }
+    [ -f "$LEGACY_WG_CONF_FALLBACK" ] && { printf '%s' "$LEGACY_WG_CONF_FALLBACK"; return 0; }
+    return 1
+}
+
+# 0 - хост уже на новом формате (есть BACKEND=... в install.conf), 1 - legacy/none.
+legacy_detect() {
+    [ -f "$CONF_FILE" ] || return 1
+    grep -q '^BACKEND=' "$CONF_FILE" 2>/dev/null && return 1
+    return 0
+}
+
+legacy_obf_key() {
+    local k=${OBF_KEY:-}
+    valid_hex64 "$k" 2>/dev/null && { printf '%s' "$k"; return 0; }
+    return 1
+}
+
+# Читает старый конфиг (уже подгружен load_config) и раскладывает по новым
+# переменным. Чистая функция от файлов: идемпотентна, ничего не пишет.
+# Экспорт для dry-run: LEGACY_CLIENTS, LEGACY_PEERS, MIGRATE_*.
+legacy_read() {
+    LEGACY_CLIENTS=0
+    LEGACY_PEERS=0
+    MIGRATE_MODE_CHANGED=0
+    MIGRATE_OBF_REUSED=0
+    MIGRATE_AUTH_WAS_OFF=0
+
+    local old_mode=${PROXY_MODE:-udp}
+    local old_obf=${OBF_PROFILE:-none}
+    local old_listen=${LISTEN_PORT:-56000}
+    local old_backend_port=${BACKEND_PORT:-}
+    local old_wg_setup=${WG_SETUP:-0}
+    local old_clients_file=${CLIENTS_FILE_CONF:-}
+    local legacy_wg=""
+
+    legacy_wg=$(legacy_wg_conf || true)
+    [ -n "$legacy_wg" ] || legacy_wg=""
+
+    # BACKEND: свой WG, если старый установщик его поднимал или wg0.conf существует.
+    if [ "$old_wg_setup" = 1 ] || [ -n "$legacy_wg" ]; then
+        BACKEND="new"
+    elif [ -n "$old_backend_port" ]; then
+        BACKEND="external"
+        CONNECT="127.0.0.1:$old_backend_port"
+    else
+        BACKEND="new"
+    fi
+
+    # Режим: свой WG работает только в udp (validate_config) - tcp+new едет в udp.
+    if [ "$old_mode" = tcp ] && [ "$BACKEND" = new ]; then
+        PROXY_MODE="udp"
+        MIGRATE_MODE_CHANGED=1
+    else
+        PROXY_MODE="$old_mode"
+    fi
+
+    LISTEN_PORT="$old_listen"
+
+    # Обфускация: апгрейд rtpopus -> rtpopus3 с ТЕМ ЖЕ ключом (ссылки живы).
+    case "$old_obf" in
+        rtpopus)
+            OBF_PROFILE="rtpopus3"
+            if OBF_KEY=$(legacy_obf_key); then MIGRATE_OBF_REUSED=1; else OBF_KEY=""; fi ;;
+        none) OBF_PROFILE="none"; OBF_KEY="" ;;
+        rtpopus2|rtpopus3) OBF_PROFILE="$old_obf"; legacy_obf_key >/dev/null && MIGRATE_OBF_REUSED=1 ;;
+        *) OBF_PROFILE="none"; OBF_KEY="" ;;
+    esac
+
+    # WG: старая сеть фиксирована 10.13.13.0/24 (.1 сервер); порт - BACKEND_PORT.
+    WG_NET="10.13.13.0/24"
+    if [ -n "$old_backend_port" ] && [ "$BACKEND" = new ]; then
+        WG_PORT="$old_backend_port"
+    else
+        WG_PORT="51820"
+    fi
+    # Порт WG наружу не открывается и не должен совпадать с listen-портом.
+    if [ "$WG_PORT" = "$LISTEN_PORT" ]; then WG_PORT="51820"; fi
+
+    # Метод запуска: что реально стоит, то и keep (docker по умолчанию).
+    if [ -f "$UNIT_FILE" ]; then INSTALL_METHOD="systemd"; else INSTALL_METHOD="docker"; fi
+    # Источник бинарей едет на GitLab всегда.
+    VERSION="latest"
+    KCP_ARGS=""
+    # PUBLIC_HOST/CONNECT из CLI (--host/--connect) уже применены parse_opts до
+    # вызова команды и здесь не затираются.
+
+    # Подсчёт клиентов/пиров для dry-run и verify.
+    if [ -n "$old_clients_file" ] && [ -f "$old_clients_file" ]; then
+        LEGACY_CLIENTS_FILE="$old_clients_file"
+        LEGACY_CLIENTS=$(jq -r '.clients | length' "$old_clients_file" 2>/dev/null || echo 0)
+    elif [ -f "$PREFIX/clients/clients.json" ]; then
+        LEGACY_CLIENTS_FILE="$PREFIX/clients/clients.json"
+        LEGACY_CLIENTS=$(jq -r '.clients | length' "$LEGACY_CLIENTS_FILE" 2>/dev/null || echo 0)
+    else
+        LEGACY_CLIENTS_FILE=""
+        LEGACY_CLIENTS=0
+        MIGRATE_AUTH_WAS_OFF=1
+    fi
+    if [ -n "$legacy_wg" ]; then
+        LEGACY_PEERS=$(grep -c '^\[Peer\]' "$legacy_wg" 2>/dev/null || echo 0)
+    fi
+}
+
+# Импорт клиентов старого clients.json с ТЕМИ ЖЕ client_id (иначе старые
+# freeturn://-ссылки не пройдут allowlist) и по возможности теми же WG-IP.
+# Ключи WireGuard перевыпускаются (приватники клиентов на сервере не хранятся):
+# актуальный конфиг/ссылка забираются через client-conf / расшаривание.
+# Вызывать ПОСЛЕ apply_config (ft-wg0 создан, clients_sync поднял хозяина).
+migrate_import_peers() {
+    local legacy_wg=$1 old_clients=$2
+    local idx=0 pub ip name cid created priv fresh pubmap
+    [ -n "$old_clients" ] && [ -f "$old_clients" ] || { clients_links_write; return 0; }
+
+    # Карта pubkey -> ip из старого wg0.conf: IP переиспользуем, ключи - нет.
+    pubmap=$(mktemp)
+    awk '/^\[Peer\]/{pub="";ip=""} /^PublicKey[[:space:]]*=/{pub=$3} /^AllowedIPs[[:space:]]*=/{split($3,a,"[/,]");ip=a[1]} pub!=""&&ip!=""{print pub" "ip;pub="";ip=""}' \
+        "$legacy_wg" > "$pubmap" 2>/dev/null || true
+
+    while IFS=$'\t' read -r cid comment; do
+        [ -n "$cid" ] || continue
+        name=$(printf '%s' "$comment" | tr -c 'A-Za-z0-9._-' '_' | sed 's/^[^A-Za-z0-9]*/c/' | cut -c1-32)
+        valid_name "$name" || name="client-$idx"
+        # clients_sync уже создал хозяина со свежим cid: сносим его, legacy cid важнее.
+        if meta_has "$name"; then
+            fresh=$(meta_get "$name" | cut -d'|' -f2)
+            [ -n "$fresh" ] && [ "$fresh" != "$cid" ] && allow_del "$fresh" || true
+            wg_peer_remove "$name" || true
+            rm -rf "$(client_dir "$name")"
+        fi
+        mkdir -p "$(client_dir "$name")"
+        # IP из wg0.conf, если ещё свободен, иначе следующий свободный.
+        ip=$(awk -v n=$((idx + 1)) 'NR==n{print $2}' "$pubmap" 2>/dev/null)
+        if [ -z "$ip" ] || grep -q "AllowedIPs = $ip/32" "$WG_CONF" 2>/dev/null; then
+            ip=""
+        fi
+        if [ -z "$ip" ]; then
+            # shellcheck disable=SC2155
+            ip=$(wg_next_ip) || fail subnet_full "в подсети $WG_NET нет свободных адресов"
+        fi
+        priv=$(wg genkey 2>/dev/null) || fail internal "wg genkey"
+        pub=$(wg pubkey <<< "$priv")
+        printf '\n[Peer]\n# ft-client: %s\nPublicKey = %s\nAllowedIPs = %s/32\n' \
+            "$name" "$pub" "$ip" >> "$WG_CONF"
+        cat > "$(client_conf_file "$name")" <<EOF
+[Interface]
+PrivateKey = $priv
+Address = $ip/32
+DNS = 1.1.1.1, 1.0.0.1
+MTU = $WG_MTU
+
+[Peer]
+PublicKey = $(wg_server_pub)
+AllowedIPs = 0.0.0.0/0, ::/0
+Endpoint = $CLIENT_LISTEN
+PersistentKeepalive = 25
+EOF
+        chmod 0600 "$(client_conf_file "$name")"
+        created=$(date '+%Y-%m-%d %H:%M')
+        allow_add "$cid" "$name" || fail internal "не удалось обновить $CLIENTSFILE"
+        meta_put "$name|$cid|$ip|$pub|$created"
+        idx=$((idx + 1))
+    done < <(jq -r '.clients | to_entries[] | "\(.key)\t\(.value.comment // "")"' "$old_clients" 2>/dev/null)
+    rm -f "$pubmap"
+    wg_sync
+    # Хозяин есть всегда; ссылки пересобираются под новый host/key/wg.
+    clients_links_write
+}
+
+migrate_backup() {
+    local ts legacy_wg
+    ts=$(date '+%Y%m%d-%H%M%S')
+    MIGRATE_BACKUP="/root/freeturn-v4-backup-$ts.tgz"
+    legacy_wg=$(legacy_wg_conf || true)
+    # shellcheck disable=SC2086
+    tar -czf "$MIGRATE_BACKUP" \
+        ${CONF_FILE:+$CONF_FILE} \
+        ${LEGACY_CLIENTS_FILE:+$LEGACY_CLIENTS_FILE} \
+        ${legacy_wg:+$legacy_wg} \
+        "$PREFIX/clients" "$PREFIX/auth" 2>/dev/null || \
+        tar -czf "$MIGRATE_BACKUP" "$PREFIX" ${legacy_wg} 2>/dev/null || \
+        fail internal "не удалось создать бэкап $MIGRATE_BACKUP"
+    chmod 0600 "$MIGRATE_BACKUP"
+}
+
+migrate_rollback() {
+    log_error "Откат из $MIGRATE_BACKUP"
+    tar -xzf "$MIGRATE_BACKUP" -C / 2>/dev/null || true
+    ft_restart 2>/dev/null || true
+}
+
+# Чистый мигрированный стейт: сносит артефакты v4, которые apply_config не
+# перезаписывает. Всё best-effort (|| true): мусор не должен ронять миграцию.
+# Бэкап в /root уже содержит копии, allowlist живёт в $AUTH_DIR/clients.json.
+migrate_cleanup_legacy() {
+    # compose-стек v4: контейнер уже убит ft_remove, добиваем метаданные.
+    # В compose-файле лежит OBF_KEY открытым текстом - удалить обязательно.
+    if [ -f "$PREFIX/docker-compose.yml" ]; then
+        ( cd "$PREFIX" && docker compose down >/dev/null 2>&1 ) || true
+        rm -f "$PREFIX/docker-compose.yml"
+    fi
+    # Одиночный клиентский конфиг v4 (ключи перевыпущены, см. migrate_import_peers).
+    rm -f "$PREFIX/wireguard-client.conf"
+    # Старый allowlist: сервер его больше не читает (см. $CLIENTSFILE).
+    if [ -n "${LEGACY_CLIENTS_FILE:-}" ] && [ "$LEGACY_CLIENTS_FILE" != "$CLIENTSFILE" ]; then
+        rm -f "$LEGACY_CLIENTS_FILE"
+        rmdir "$(dirname "$LEGACY_CLIENTS_FILE")" 2>/dev/null || true
+    fi
+    # wg0 без systemd (старый `wg-quick up` напрямую): unit-отключение его не гасит.
+    if [ -n "$(legacy_wg_conf || true)" ]; then
+        systemctl disable --now "wg-quick@$LEGACY_WG_IFACE" >/dev/null 2>&1 || true
+    fi
+    if ip link show "$LEGACY_WG_IFACE" >/dev/null 2>&1; then
+        ip link del dev "$LEGACY_WG_IFACE" >/dev/null 2>&1 || true
+    fi
+    # Старый ghcr-образ больше не нужен.
+    if command -v docker >/dev/null 2>&1; then
+        docker rmi "ghcr.io/samosvalishe/free-turn-proxy:latest" >/dev/null 2>&1 || true
+    fi
+    return 0
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # RPC-команды
 
-RPC_COMMANDS="probe apply stop restart logs client-list client-add client-conf client-remove uninstall"
+RPC_COMMANDS="probe apply migrate stop restart logs client-list client-add client-conf client-remove uninstall"
 
 is_rpc_command() {
     local c
@@ -1268,6 +1509,83 @@ cmd_uninstall() {
     ok
 }
 
+# Миграция v4 -> v5 одной транзакцией: dry-run (--dry-run) только читает и
+# отдаёт маппинг; без флага - бэкап, стоп старого стека, apply с GitLab,
+# импорт клиентов/пиров с теми же client_id, verify. Идемпотентна: повтор на
+# уже новом формате возвращает already_migrated.
+cmd_migrate() {
+    stage migrate
+    require_root
+    ensure_base_deps
+    if ! legacy_detect; then
+        d_bool migrated false
+        d_str reason "already_migrated"
+        if [ -f "$CONF_FILE" ]; then
+            d_raw config "$(config_json)"
+        fi
+        ok
+        return 0
+    fi
+    legacy_read
+    if [ "$DRY_RUN" = 1 ]; then
+        d_bool migrated false
+        d_bool dry_run true
+        d_str backend "$BACKEND"
+        d_str connect "$CONNECT"
+        d_str mode "$PROXY_MODE"
+        d_str obf_profile "$OBF_PROFILE"
+        d_bool obf_key_reused "$([ "$MIGRATE_OBF_REUSED" = 1 ] && echo true || echo false)"
+        d_bool mode_changed "$([ "$MIGRATE_MODE_CHANGED" = 1 ] && echo true || echo false)"
+        d_bool auth_was_off "$([ "$MIGRATE_AUTH_WAS_OFF" = 1 ] && echo true || echo false)"
+        d_num listen_port "$LISTEN_PORT"
+        d_num wg_port "$WG_PORT"
+        d_str wg_net "$WG_NET"
+        d_str method "$INSTALL_METHOD"
+        d_num legacy_clients "$LEGACY_CLIENTS"
+        d_num legacy_peers "$LEGACY_PEERS"
+        ok
+        return 0
+    fi
+    with_lock
+    migrate_backup
+    # Стоп старого стека ДО wg_apply: старый wg0 держит ту же подсеть.
+    # compose-контейнер v4 носит то же имя - его убивает ft_remove внутри apply.
+    ft_stop
+    if [ -n "$(legacy_wg_conf || true)" ]; then
+        systemctl disable --now "wg-quick@$LEGACY_WG_IFACE" >/dev/null 2>&1 || true
+    fi
+    if ! apply_config; then
+        migrate_rollback
+        fail start_failed "миграция не удалась - откат из $MIGRATE_BACKUP выполнен"
+    fi
+    if [ "$BACKEND" = new ]; then
+        legacy_wg=$(legacy_wg_conf || true)
+        if [ -n "$legacy_wg" ]; then
+            migrate_import_peers "$legacy_wg" "${LEGACY_CLIENTS_FILE:-}"
+        fi
+    fi
+    # Verify: сервер поднят, allowlist не меньше legacy.
+    ft_running || { migrate_rollback; fail start_failed "FreeTurn не запустился после миграции"; }
+    new_count=$(jq -r '.clients | length' "$CLIENTSFILE" 2>/dev/null || echo 0)
+    if [ "$new_count" -lt "$LEGACY_CLIENTS" ]; then
+        migrate_rollback
+        fail internal "потеряны клиенты ($LEGACY_CLIENTS -> $new_count) - откат выполнен"
+    fi
+    migrate_cleanup_legacy
+    d_bool migrated true
+    d_str backup "$MIGRATE_BACKUP"
+    d_str backend "$BACKEND"
+    d_str mode "$PROXY_MODE"
+    d_str obf_profile "$OBF_PROFILE"
+    d_bool obf_key_reused "$([ "$MIGRATE_OBF_REUSED" = 1 ] && echo true || echo false)"
+    d_bool mode_changed "$([ "$MIGRATE_MODE_CHANGED" = 1 ] && echo true || echo false)"
+    d_bool auth_was_off "$([ "$MIGRATE_AUTH_WAS_OFF" = 1 ] && echo true || echo false)"
+    d_num clients "$new_count"
+    d_num listen_port "$LISTEN_PORT"
+    d_str version "$(ft_version)"
+    ok
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Опции: один парсер для RPC (--k=v) и CLI установщика.
 
@@ -1303,6 +1621,7 @@ parse_opts() {
                 [[ "$v" =~ ^(true|false)$ ]] || fail bad_arg "--kcp-acknodelay: true | false"
                 kcp_opt "-kcp-acknodelay=$v" ;;
             --tail=*)        TAIL=$v ;;
+            --dry-run)       DRY_RUN=1 ;;
             --name=*)        NAME=$v; valid_name "$v" || fail bad_arg "name: латиница, цифры, . _ - (до 32)" ;;
             --target=*)      TARGET=$v; [[ "$v" =~ ^(freeturn|wg|all)$ ]] || fail bad_arg "target: freeturn | wg | all" ;;
             --purge)         PURGE=1 ;;
@@ -1685,6 +2004,12 @@ Free Turn Proxy - установщик и контроллер сервера.
   --bin=PATH               свой бинарь сервера вместо релиза (version=local)
   --kcp-*=N                параметры KCP сервера для --mode=tcp
   --web-port=N --web-ttl=S веб-раздача файлов клиентов (default 8080, 900 c)
+  --dry-run                только для migrate: показать маппинг v4->v5 без изменений
+
+  freeturn migrate [--dry-run] [--method=...] [--host=...]
+                           миграция v4 (GitHub) -> v5 (GitLab): бэкап в
+                           /root/freeturn-v4-backup-<ts>.tgz, клиенты и
+                           obf-ключ сохраняются, rtpopus -> rtpopus3
 
 JSON RPC (приложение, proto $PROTO_VERSION):
   freeturn <${RPC_COMMANDS// /|}> [--ключ=значение ...]
