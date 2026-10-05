@@ -1479,7 +1479,7 @@ migrate_import_peers() {
     # Для поколения control (MIGRATE_FRESH_IPS=1) позиционное соответствие
     # бессмысленно (чужие ft-user блоки остаются как есть), всем выдаём свежие IP.
     pubmap=$(mktemp)
-    if [ "${MIGRATE_FRESH_IPS:-0}" != 1 ]; then
+    if [ "${MIGRATE_FRESH_IPS:-0}" != 1 ] && [ -n "$legacy_wg" ] && [ -f "$legacy_wg" ]; then
         awk '/^\[Peer\]/{pub="";ip=""} /^PublicKey[[:space:]]*=/{pub=$3} /^AllowedIPs[[:space:]]*=/{split($3,a,"[/,]");ip=a[1]} pub!=""&&ip!=""{print pub" "ip;pub="";ip=""}' \
             "$legacy_wg" > "$pubmap" 2>/dev/null || true
     fi
@@ -1530,22 +1530,50 @@ EOF
         idx=$((idx + 1))
     done < <(jq -r '.clients | to_entries[] | "\(.key)\t\(.value.comment // "")"' "$old_clients" 2>/dev/null)
     rm -f "$pubmap"
+    if [ "$idx" -eq 0 ] && [ "${LEGACY_CLIENTS:-0}" -gt 0 ]; then
+        fail internal "импорт клиентов: источник ${old_clients:-?} пуст, ожидалось $LEGACY_CLIENTS"
+    fi
     wg_sync
     # Хозяин есть всегда; ссылки пересобираются под новый host/key/wg.
     clients_links_write
 }
 
 migrate_backup() {
-    local ts legacy_wg
+    local ts legacy_wg p
     ts=$(date '+%Y%m%d-%H%M%S')
-    MIGRATE_BACKUP="/root/freeturn-v4-backup-$ts.tgz"
+    MIGRATE_BACKUP="${MIGRATE_BACKUP_DIR:-/root}/freeturn-v4-backup-$ts.tgz"
     legacy_wg=$(legacy_wg_conf || true)
+    # Снапшот allowlist ДО apply_config: apply может перезаписать исходник,
+    # импорт читает только снапшот (регрессия: control 16 -> 1).
+    LEGACY_CLIENTS_SNAPSHOT=""
+    if [ "${LEGACY_CLIENTS:-0}" -gt 0 ] && [ -n "${LEGACY_CLIENTS_FILE:-}" ] && [ -f "$LEGACY_CLIENTS_FILE" ]; then
+        LEGACY_CLIENTS_SNAPSHOT=$(mktemp /tmp/ft-clients-snapshot.XXXXXX)
+        cp "$LEGACY_CLIENTS_FILE" "$LEGACY_CLIENTS_SNAPSHOT" || \
+            fail internal "не удалось снять снапшот $LEGACY_CLIENTS_FILE"
+        chmod 0600 "$LEGACY_CLIENTS_SNAPSHOT"
+    fi
+    # Пути нового формата, которых не было до миграции: rollback их удаляет,
+    # иначе detect_kind после отката врёт "v5".
+    MIGRATE_NEW_PATHS=""
+    MIGRATE_UNIT_WAS_ABSENT=0
+    MIGRATE_OLD_BINS=""
+    for p in "$CONF_FILE" "$AUTH_DIR" "$PREFIX/clients" "$PREFIX/clients.list" "$PREFIX/server" "$PREFIX/install.sh"; do
+        [ -e "$p" ] || MIGRATE_NEW_PATHS="$MIGRATE_NEW_PATHS $p"
+    done
+    [ -f "$UNIT_FILE" ] || MIGRATE_UNIT_WAS_ABSENT=1
+    for p in "$PREFIX"/server-linux-*; do
+        [ -f "$p" ] && MIGRATE_OLD_BINS="$MIGRATE_OLD_BINS $p"
+    done
     # Явный список вместо $PREFIX целиком: бэкап должен содержать и файлы ВНЕ
     # него (юнит, усыновлённый WG-конф), и не тащить мусор.
     local members=()
     [ -f "$CONF_FILE" ] && members+=("$CONF_FILE")
     [ -n "${LEGACY_CLIENTS_FILE:-}" ] && [ -f "$LEGACY_CLIENTS_FILE" ] && members+=("$LEGACY_CLIENTS_FILE")
     [ -n "$legacy_wg" ] && [ -f "$legacy_wg" ] && members+=("$legacy_wg")
+    # Усыновлённый WG-конф поколения control (живой интерфейс): apply его правит.
+    if [ -f "$WG_CONF" ] && [ "$WG_CONF" != "${legacy_wg:-}" ]; then
+        members+=("$WG_CONF")
+    fi
     [ -f "$UNIT_FILE" ] && members+=("$UNIT_FILE")
     [ -f "$ENVFILE" ] && members+=("$ENVFILE")
     local f
@@ -1570,8 +1598,32 @@ migrate_backup() {
 }
 
 migrate_rollback() {
+    local p b
     log_error "Откат из $MIGRATE_BACKUP"
     tar -xzf "$MIGRATE_BACKUP" -C / 2>/dev/null || true
+    # Файлы нового формата, которых не было до migrate_backup: бэкап их не
+    # покрывает. Чистим только внутри $PREFIX (защита от опечаток в путях).
+    # shellcheck disable=SC2086
+    for p in ${MIGRATE_NEW_PATHS:-}; do
+        case "$p" in
+            "$PREFIX"/*) rm -rf "$p" 2>/dev/null || true ;;
+        esac
+    done
+    # Бинари с незнакомыми именами, скачанные apply_config (известные имена
+    # бэкап уже откатил поверх).
+    for b in "$PREFIX"/server-linux-*; do
+        [ -e "$b" ] || continue
+        case " ${MIGRATE_OLD_BINS:-} " in
+            *" $b "*) ;;
+            *) rm -f "$b" 2>/dev/null || true ;;
+        esac
+    done
+    # Юнит, созданный apply_config на хосте без systemd-метода до миграции.
+    if [ "${MIGRATE_UNIT_WAS_ABSENT:-0}" = 1 ] && [ -f "$UNIT_FILE" ]; then
+        systemctl disable --now "$SERVICE" >/dev/null 2>&1 || true
+        rm -f "$UNIT_FILE"
+        systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
     if [ "${BACKEND:-}" = new ] && [ -f "$WG_CONF" ]; then
         systemctl daemon-reload >/dev/null 2>&1 || true
         systemctl restart "wg-quick@$WG_IFACE" >/dev/null 2>&1 || \
@@ -1851,10 +1903,12 @@ cmd_migrate() {
         migrate_rollback
         fail start_failed "миграция не удалась - откат из $MIGRATE_BACKUP выполнен"
     fi
+    # Импорт по снапшоту allowlist (снят до apply_config). Гейт по v1-конфе WG
+    # здесь был багом: на поколении control импорт молча пропускался (16 -> 1).
     if [ "$BACKEND" = new ]; then
-        legacy_wg=$(legacy_wg_conf || true)
-        if [ -n "$legacy_wg" ]; then
-            migrate_import_peers "$legacy_wg" "${LEGACY_CLIENTS_FILE:-}"
+        if [ -n "${LEGACY_CLIENTS_SNAPSHOT:-}" ] && [ -f "$LEGACY_CLIENTS_SNAPSHOT" ]; then
+            migrate_import_peers "$(legacy_wg_conf || true)" "$LEGACY_CLIENTS_SNAPSHOT"
+            rm -f "$LEGACY_CLIENTS_SNAPSHOT"
         fi
     fi
     # Verify: сервер поднят, allowlist не меньше legacy.
