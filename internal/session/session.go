@@ -99,6 +99,8 @@ type Deps struct {
 	Observer      Observer
 	Solver        vk.ManualSolverFunc
 	CaptchaActive func() bool
+	StateDir      string
+	SkipGlobalDNS bool
 	// LocalPipe подменяет локальный UDP-сокет прямым каналом в памяти.
 	LocalPipe net.PacketConn
 	Options   Options
@@ -131,12 +133,13 @@ type Session struct {
 	total   int
 	traffic *traffic
 
-	connected   atomic.Int32
-	status      atomic.Pointer[statusInfo]
-	started     atomic.Bool
-	reconnectCh chan struct{}
-	recycleCh   chan struct{}
-	wakeCh      chan struct{}
+	connected     atomic.Int32
+	status        atomic.Pointer[statusInfo]
+	started       atomic.Bool
+	warmupPending atomic.Bool
+	reconnectCh   chan struct{}
+	recycleCh     chan struct{}
+	wakeCh        chan struct{}
 }
 
 func New(cfg *config.Client, deps Deps) (*Session, error) {
@@ -170,6 +173,7 @@ func New(cfg *config.Client, deps Deps) (*Session, error) {
 		s.traffic = newTraffic()
 	}
 	s.status.Store(&statusInfo{phase: PhaseConnecting, total: total})
+	s.warmupPending.Store(cfg.Proxy.Mode == config.ProxyModeUDP)
 	return s, nil
 }
 
@@ -195,14 +199,16 @@ func (s *Session) Run(ctx context.Context) (err error) {
 	log := s.deps.Logger
 	dnsdial.SetLogger(log)
 
-	if len(s.cfg.DNS.Servers) > 0 {
+	if !s.deps.SkipGlobalDNS && len(s.cfg.DNS.Servers) > 0 {
 		dnsdial.SetUDPDNSServers(s.cfg.DNS.Servers)
 		log.Infof("[DNS] using custom UDP servers: %v", s.cfg.DNS.Servers)
-	} else {
+	} else if !s.deps.SkipGlobalDNS {
 		dnsdial.ResetUDPDNSServers()
 	}
 	appDialer := dnsdial.AppDialer(s.cfg.DNS.Mode)
-	dnsdial.InstallGlobalResolver(s.cfg.DNS.Mode)
+	if !s.deps.SkipGlobalDNS {
+		dnsdial.InstallGlobalResolver(s.cfg.DNS.Mode)
+	}
 
 	peer, err := net.ResolveUDPAddr("udp", s.cfg.Proxy.Peer)
 	if err != nil {
@@ -298,6 +304,7 @@ func (s *Session) refreshCredentials(ctx context.Context, auth udprelay.AuthHand
 func (s *Session) relayLoop(ctx context.Context, attempt func(context.Context) error) error {
 	log := s.deps.Logger
 	for generation := uint64(1); ; generation++ {
+		s.warmupPending.Store(s.cfg.Proxy.Mode == config.ProxyModeUDP)
 		startedAt := time.Now()
 		log.Infof("relay start generation=%d", generation)
 		attemptCtx, attemptCancel := context.WithCancel(ctx)
@@ -358,9 +365,39 @@ func (s *Session) watchWake(ctx context.Context) {
 		case <-s.wakeCh:
 		}
 		if s.wakeNeedsRecycle(ctx) {
-			s.Reconnect()
+			s.TryReconnect()
 		}
 	}
+}
+
+// TryReconnect leaves the current generation intact until its first-stream barrier ends.
+func (s *Session) TryReconnect() bool {
+	if !s.started.Load() || s.captchaActive() {
+		return false
+	}
+	if state := s.status.Load(); state == nil || state.phase == PhaseIdle || state.phase == PhaseError {
+		return false
+	}
+	if s.cfg.Proxy.Mode == config.ProxyModeTCP {
+		if s.connected.Load() == 0 {
+			return false
+		}
+		select {
+		case s.recycleCh <- struct{}{}:
+			return true
+		default:
+			return false
+		}
+	}
+	// Reserve the next warm-up immediately so concurrent failed probes cannot recycle twice.
+	if !s.warmupPending.CompareAndSwap(false, true) {
+		return false
+	}
+	select {
+	case s.reconnectCh <- struct{}{}:
+	default:
+	}
+	return true
 }
 
 func (s *Session) wakeNeedsRecycle(ctx context.Context) bool {
@@ -510,6 +547,10 @@ func (s *Session) relayUDP(ctx context.Context, auth udprelay.AuthHandler, dial 
 		ClientID:      s.cfg.ClientID,
 		NoClientIDAck: s.cfg.NoClientIDAck,
 		TrafficStats:  s.trafficStats(),
+		OnWarmupDone: func() {
+			s.warmupPending.Store(false)
+			log.Infof("first-stream warm-up finished; reconnect enabled")
+		},
 	}
 	return udprelay.Run(ctx, dialer, auth, log, &s.connected, routeCallback, params, peer, local, s.total)
 }

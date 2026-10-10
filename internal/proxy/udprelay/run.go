@@ -34,6 +34,7 @@ type Params struct {
 	ClientID      string
 	NoClientIDAck bool
 	TrafficStats  *stats.Stats
+	OnWarmupDone  func()
 }
 
 const streamStartBarrier = 20 * time.Second
@@ -147,6 +148,9 @@ func Run(ctx context.Context, dtlsDialer *dtlsdial.Dialer, auth AuthHandler, log
 	case <-okchan:
 	case <-runCtx.Done():
 	case <-time.After(streamStartBarrier):
+	}
+	if runCtx.Err() == nil && params.OnWarmupDone != nil {
+		params.OnWarmupDone()
 	}
 
 	for i := 1; i < numStreams; i++ {

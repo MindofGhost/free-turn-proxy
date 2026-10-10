@@ -178,7 +178,7 @@ func Reconnect() {
 		return
 	}
 	if !l.direct() {
-		l.sess.Reconnect()
+		l.sess.TryReconnect()
 		return
 	}
 	mu.Lock()

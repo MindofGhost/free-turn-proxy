@@ -63,6 +63,7 @@ func coreLog() logx.Logger { return &sinkLogger{buf: sharedLogBuf} }
 type sinkLogger struct {
 	debug bool
 	buf   *logBuffer
+	sink  EventSink
 }
 
 func (l *sinkLogger) write(level, format string, v ...any) {
@@ -71,7 +72,11 @@ func (l *sinkLogger) write(level, format string, v ...any) {
 	if !logBufOff.Load() {
 		l.buf.append(now.Format("15:04:05") + " [" + level + "] " + msg)
 	}
-	if s := currentSink(); s != nil {
+	s := l.sink
+	if s == nil {
+		s = currentSink()
+	}
+	if s != nil {
 		s.OnLog(level, msg, now.UnixMilli())
 	}
 }

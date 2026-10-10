@@ -25,7 +25,7 @@ func (s *Session) link(dialer net.Dialer, peer *net.UDPAddr) (udprelay.AuthHandl
 		}, nil
 	}
 
-	prov, err := buildProvider(s.cfg, dialer, &s.connected, s.deps.Solver, log, s.total)
+	prov, err := buildProvider(s.cfg, dialer, &s.connected, s.deps.Solver, log, s.total, s.deps.StateDir)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -55,6 +55,7 @@ func buildProvider(
 	solver vk.ManualSolverFunc,
 	logger logx.Logger,
 	total int,
+	stateDir string,
 ) (provider.Provider, error) {
 	switch cfg.Provider.Name {
 	case config.ProviderVK:
@@ -70,8 +71,8 @@ func buildProvider(
 				StreamsPerCache: cfg.VK.StreamsPerCred,
 				StreamsAlive:    connected.Load,
 				FingerprintSeed: cfg.ClientID,
-				StatePaths:      vk.DefaultStatePaths(),
-				CredentialPaths: vk.DefaultCredentialPaths(),
+				StatePaths:      vk.StatePathsIn(stateDir),
+				CredentialPaths: vk.CredentialPathsIn(stateDir),
 				Log:             logger,
 				Debug:           cfg.Log.Debug,
 			}, solver)

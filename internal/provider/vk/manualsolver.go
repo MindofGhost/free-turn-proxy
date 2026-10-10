@@ -4,14 +4,13 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"sync"
 
 	"github.com/samosvalishe/free-turn-proxy/internal/provider/vk/internal/browserprofile"
 	"github.com/samosvalishe/free-turn-proxy/internal/provider/vk/internal/captcha"
 	manualcaptcha "github.com/samosvalishe/free-turn-proxy/internal/provider/vk/internal/captcha/manual"
 )
 
-var proxyManualMu sync.Mutex
+var proxyManualGate = make(chan struct{}, 1)
 
 // ProxyManualSolver показывает UI после запуска локального captcha-прокси.
 func ProxyManualSolver(show func(url string), hide func()) ManualSolverFunc {
@@ -20,8 +19,15 @@ func ProxyManualSolver(show func(url string), hide func()) ManualSolverFunc {
 			return "", fmt.Errorf("manual captcha: no redirect_uri")
 		}
 
-		proxyManualMu.Lock()
-		defer proxyManualMu.Unlock()
+		select {
+		case proxyManualGate <- struct{}{}:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+		defer func() { <-proxyManualGate }()
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		if hide != nil {
 			defer hide()
 		}

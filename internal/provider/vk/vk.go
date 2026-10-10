@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"path/filepath"
 	"time"
 
 	"github.com/samosvalishe/free-turn-proxy/internal/logx"
@@ -65,6 +66,20 @@ func New(cfg Config, solver ManualSolverFunc) (*Provider, error) {
 func DefaultStatePaths() []string { return statedir.Paths(vkauth.PersonaStateFile) }
 
 func DefaultCredentialPaths() []string { return statedir.Paths(vkauth.CredentialsStateFile) }
+
+func StatePathsIn(dir string) []string {
+	if dir == "" {
+		return DefaultStatePaths()
+	}
+	return []string{filepath.Join(dir, vkauth.PersonaStateFile)}
+}
+
+func CredentialPathsIn(dir string) []string {
+	if dir == "" {
+		return DefaultCredentialPaths()
+	}
+	return []string{filepath.Join(dir, vkauth.CredentialsStateFile)}
+}
 
 func (p *Provider) GetCredentials(ctx context.Context, streamID int) (provider.Credentials, error) {
 	user, pass, addrs, expiresAt, err := p.auth.GetCredentials(ctx, p.link, streamID)
