@@ -9,10 +9,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/xtaci/smux"
 	"gitlab.com/freeturn/free-turn-proxy/internal/client/ish"
 	"gitlab.com/freeturn/free-turn-proxy/internal/clientsdb"
 	"gitlab.com/freeturn/free-turn-proxy/internal/logx"
 	"gitlab.com/freeturn/free-turn-proxy/internal/netconn"
+	"gitlab.com/freeturn/free-turn-proxy/internal/netctl"
 	"gitlab.com/freeturn/free-turn-proxy/internal/provider"
 	"gitlab.com/freeturn/free-turn-proxy/internal/proxy/udprelay"
 	"gitlab.com/freeturn/free-turn-proxy/internal/randx"
@@ -23,7 +25,6 @@ import (
 	"gitlab.com/freeturn/free-turn-proxy/internal/transport/turndial"
 	"gitlab.com/freeturn/free-turn-proxy/internal/wire"
 	"gitlab.com/freeturn/free-turn-proxy/internal/wire/shape"
-	"github.com/xtaci/smux"
 )
 
 const (
@@ -158,7 +159,7 @@ func announceReady(ctx context.Context, log logx.Logger, pool *sessionPool, numS
 }
 
 func listen(ctx context.Context, addr string, log logx.Logger) (net.Listener, error) {
-	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", addr)
+	ln, err := netctl.NoMPTCP(nil).Listen(ctx, "tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("tcprelay listen %s: %w", addr, err)
 	}

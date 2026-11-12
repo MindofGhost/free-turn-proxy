@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"gitlab.com/freeturn/free-turn-proxy/internal/netconn"
 	"github.com/xtaci/smux"
+	"gitlab.com/freeturn/free-turn-proxy/internal/netconn"
 )
 
 // datagramConn подаёт пары PacketPipe как net.Conn с сохранением границ датаграмм;

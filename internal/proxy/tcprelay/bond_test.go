@@ -9,12 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xtaci/smux"
 	"gitlab.com/freeturn/free-turn-proxy/internal/logx"
 	"gitlab.com/freeturn/free-turn-proxy/internal/netconn"
 	"gitlab.com/freeturn/free-turn-proxy/internal/proxy/bond"
 	"gitlab.com/freeturn/free-turn-proxy/internal/proxy/tcpserver"
 	"gitlab.com/freeturn/free-turn-proxy/internal/transport/kcpmux"
-	"github.com/xtaci/smux"
 )
 
 func pairedBondSession(t *testing.T, ctx context.Context, server *bond.Server, backend string) *smux.Session {

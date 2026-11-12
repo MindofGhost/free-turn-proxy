@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"gitlab.com/freeturn/free-turn-proxy/internal/stats"
 	"github.com/xtaci/smux"
+	"gitlab.com/freeturn/free-turn-proxy/internal/stats"
 )
 
 func tcpPair(t *testing.T) (*net.TCPConn, net.Conn) {
