@@ -43,6 +43,44 @@ func SetLogger(l logx.Logger) { logHolder.Set(l) }
 func Log() logx.Logger { return logHolder.Get() }
 
 const captchaListenPort = "8765"
+const genericProxyPath = "/generic_proxy/"
+
+// Keep the upstream path visible so relative JS chunks and CSS assets resolve correctly.
+func genericProxyURL(target *neturl.URL) string {
+	local := &neturl.URL{
+		Path:     genericProxyPath + target.Scheme + "/" + target.Host + target.Path,
+		RawQuery: target.RawQuery,
+		Fragment: target.Fragment,
+	}
+	if target.RawPath != "" {
+		local.RawPath = genericProxyPath + target.Scheme + "/" + target.Host + target.EscapedPath()
+	}
+	return local.String()
+}
+
+func genericProxyTarget(local *neturl.URL) (*neturl.URL, error) {
+	var raw string
+	if local.Path == "/generic_proxy" {
+		raw = local.Query().Get("proxy_url")
+	} else if strings.HasPrefix(local.Path, genericProxyPath) {
+		scheme, resource, ok := strings.Cut(strings.TrimPrefix(local.EscapedPath(), genericProxyPath), "/")
+		if !ok {
+			return nil, errors.New("invalid proxy resource path")
+		}
+		raw = scheme + "://" + resource
+	} else {
+		return nil, errors.New("invalid proxy resource path")
+	}
+	target, err := neturl.Parse(raw)
+	if err != nil || target.Host == "" || target.User != nil ||
+		(target.Scheme != "https" && target.Scheme != "http") || !isAllowedProxyHost(target.Hostname()) {
+		return nil, errors.New("forbidden proxy resource URL")
+	}
+	if local.Path != "/generic_proxy" {
+		target.RawQuery = local.RawQuery
+	}
+	return target, nil
+}
 
 //go:embed inject.js
 var injectJS string
@@ -284,8 +322,12 @@ func rewriteHTMLAttrsServerSide(html string, targetURL *neturl.URL) string {
 		if strings.HasPrefix(absURL, localOrigin) {
 			return rawURL
 		}
-		// прочие абсолютные URL -> через generic_proxy
-		return "/generic_proxy?proxy_url=" + neturl.QueryEscape(absURL)
+		// Preserve the CDN directory for resources loaded relative to a script or stylesheet.
+		parsed, err := neturl.Parse(absURL)
+		if err != nil {
+			return rawURL
+		}
+		return genericProxyURL(parsed)
 	}
 
 	var placeholders = make(map[string]string)
@@ -664,14 +706,9 @@ func solveViaProxy(ctx context.Context, redirectURI string, dialer net.Dialer, p
 		mux.HandleFunc("/local-captcha-pow/", powCaptureHandler(powCapturePath, powCh))
 	}
 
-	mux.HandleFunc("/generic_proxy", func(w http.ResponseWriter, r *http.Request) {
-		targetAuthURL := r.URL.Query().Get("proxy_url")
-		targetParsed, err := neturl.Parse(targetAuthURL)
-		if err != nil || targetParsed.Host == "" {
-			http.Error(w, "Bad URL", http.StatusBadRequest)
-			return
-		}
-		if !isAllowedProxyHost(targetParsed.Hostname()) {
+	resourceProxy := func(w http.ResponseWriter, r *http.Request) {
+		targetParsed, err := genericProxyTarget(r.URL)
+		if err != nil {
 			http.Error(w, "Forbidden host", http.StatusForbidden)
 			return
 		}
@@ -679,6 +716,7 @@ func solveViaProxy(ctx context.Context, redirectURI string, dialer net.Dialer, p
 			Transport: transport,
 			Rewrite: func(req *httputil.ProxyRequest) {
 				req.Out.URL.Path = targetParsed.Path
+				req.Out.URL.RawPath = targetParsed.RawPath
 				req.Out.URL.RawQuery = targetParsed.RawQuery
 				rewriteProxyRequest(req.Out, targetParsed)
 			},
@@ -702,7 +740,7 @@ func solveViaProxy(ctx context.Context, redirectURI string, dialer net.Dialer, p
 				res.Header.Set("Access-Control-Allow-Origin", "*")
 
 				// captchaNotRobot.check идёт через /generic_proxy на api.vk.com/api.vk.ru.
-				if strings.Contains(targetAuthURL, "captchaNotRobot.check") {
+				if strings.Contains(targetParsed.Path, "captchaNotRobot.check") {
 					bodyBytes, readErr := io.ReadAll(res.Body)
 					if readErr == nil {
 						_ = res.Body.Close()
@@ -719,7 +757,9 @@ func solveViaProxy(ctx context.Context, redirectURI string, dialer net.Dialer, p
 			},
 		}
 		genericReverse.ServeHTTP(w, r)
-	})
+	}
+	mux.HandleFunc("/generic_proxy", resourceProxy)
+	mux.HandleFunc(genericProxyPath, resourceProxy)
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		Log().Debugf("[Captcha Proxy] HTTP %s %s", r.Method, r.URL.Path)

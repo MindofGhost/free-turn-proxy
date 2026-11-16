@@ -66,13 +66,21 @@ func (i *ProxyInstance) Start(configJSON string) error {
 	}
 	logger := &sinkLogger{debug: cfg.Log.Debug, buf: sharedLogBuf, sink: i.sink}
 	var captchaActive atomic.Bool
+	var pendingManual atomic.Int32
 	var solver vk.ManualSolverFunc
 	var powCapture vk.PowCaptureFunc
 	if i.sink != nil {
 		hide := func() { captchaActive.Store(false); i.sink.OnCaptcha("", false) }
-		solver = vk.ProxyManualSolver(
+		solver = vk.ProxyManualSolverWithActivity(
 			func(url string) { captchaActive.Store(true); i.sink.OnCaptcha(url, true) },
 			hide,
+			func(active bool) {
+				if active {
+					pendingManual.Add(1)
+				} else {
+					pendingManual.Add(-1)
+				}
+			},
 		)
 		powCapture = vk.ProxyPowCapture(
 			func(url string) { captchaActive.Store(true); i.sink.OnCaptcha(url, false) },
@@ -84,7 +92,7 @@ func (i *ProxyInstance) Start(configJSON string) error {
 		Observer:      instanceObserver{sink: i.sink},
 		Solver:        solver,
 		PowCapture:    powCapture,
-		CaptchaActive: captchaActive.Load,
+		CaptchaActive: func() bool { return captchaActive.Load() || pendingManual.Load() > 0 },
 		StateDir:      i.stateDir,
 		SkipGlobalDNS: true,
 		Options:       session.Options{Traffic: true},

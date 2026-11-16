@@ -21,9 +21,18 @@ const proxyPowFailureCooldown = 90 * time.Second
 
 // ProxyManualSolver показывает UI после запуска локального captcha-прокси.
 func ProxyManualSolver(show func(url string), hide func()) ManualSolverFunc {
+	return ProxyManualSolverWithActivity(show, hide, nil)
+}
+
+// ProxyManualSolverWithActivity also marks requests waiting for another instance's browser.
+func ProxyManualSolverWithActivity(show func(url string), hide func(), activity func(bool)) ManualSolverFunc {
 	return func(ctx context.Context, e *captcha.Error, dialer net.Dialer, profile browserprofile.Profile) (string, error) {
 		if e.RedirectURI == "" {
 			return "", fmt.Errorf("manual captcha: no redirect_uri")
+		}
+		if activity != nil {
+			activity(true)
+			defer activity(false)
 		}
 
 		select {

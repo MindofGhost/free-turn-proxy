@@ -189,3 +189,83 @@ func TestIsAllowedProxyHost(t *testing.T) {
 		})
 	}
 }
+
+func TestGenericProxyPreservesRelativeResources(t *testing.T) {
+	entry, err := url.Parse("https://st.vk.ru/vkid/vkid-bff/dist/entrypoints/entry.js?version=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	local, err := url.Parse(localCaptchaOrigin() + genericProxyURL(entry))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, resource := range []string{
+		"../chunks/js/iui_subapp.js?cache-bust=true&retry-attempt=1",
+		"../chunks/css/iui_subapp.css",
+		"../fonts/font%20name.woff2",
+	} {
+		relative, err := url.Parse(resource)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := genericProxyTarget(local.ResolveReference(relative))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := entry.ResolveReference(relative).String(); got.String() != want {
+			t.Errorf("resource %q = %q, want %q", resource, got, want)
+		}
+	}
+}
+
+func TestGenericProxyTargetValidation(t *testing.T) {
+	for _, tc := range []struct {
+		path string
+		want string
+	}{
+		{"/generic_proxy?proxy_url=https%3A%2F%2Fapi.vk.ru%2Fmethod%2FcaptchaNotRobot.check", "https://api.vk.ru/method/captchaNotRobot.check"},
+		{"/generic_proxy/https/st.vk.ru/chunks/app.js?v=2", "https://st.vk.ru/chunks/app.js?v=2"},
+		{"/generic_proxy/https/evil.example/app.js", ""},
+		{"/generic_proxy/https/st.vk.ru.evil.example/app.js", ""},
+		{"/generic_proxy/https/ads.vk.com/app.js", ""},
+		{"/generic_proxy/file/st.vk.ru/app.js", ""},
+		{"/generic_proxy/https/user@st.vk.ru/app.js", ""},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			local, err := url.Parse(tc.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := genericProxyTarget(local)
+			if tc.want == "" {
+				if err == nil {
+					t.Fatal("expected forbidden resource to be rejected")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.String() != tc.want {
+				t.Errorf("target = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRewriteHTMLResourceDirectories(t *testing.T) {
+	target, err := url.Parse("https://id.vk.ru/not_robot_captcha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := `<script src="https://st.vk.ru/vkid/dist/entrypoints/entry.js"></script><link href='//st.vk.ru/vkid/dist/app.css'>`
+	got := rewriteHTMLAttrsServerSide(html, target)
+	for _, resource := range []string{
+		`src="/generic_proxy/https/st.vk.ru/vkid/dist/entrypoints/entry.js"`,
+		`href='/generic_proxy/https/st.vk.ru/vkid/dist/app.css'`,
+	} {
+		if !strings.Contains(got, resource) {
+			t.Errorf("rewritten HTML missing %s", resource)
+		}
+	}
+}

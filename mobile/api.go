@@ -295,6 +295,7 @@ func startLocked(configJSON string, tunFD int, withTunnel bool) error { //nolint
 	}
 
 	var captchaActive atomic.Bool
+	var pendingManual atomic.Int32
 	var solver vk.ManualSolverFunc
 	var powCapture vk.PowCaptureFunc
 	if currentSink() != nil {
@@ -313,7 +314,13 @@ func startLocked(configJSON string, tunFD int, withTunnel bool) error { //nolint
 			logger.Debugf("[Captcha] verification page closed")
 			emitCaptcha("", false)
 		}
-		solver = vk.ProxyManualSolver(showManualCaptcha, hideCaptcha)
+		solver = vk.ProxyManualSolverWithActivity(showManualCaptcha, hideCaptcha, func(active bool) {
+			if active {
+				pendingManual.Add(1)
+			} else {
+				pendingManual.Add(-1)
+			}
+		})
 		powCapture = vk.ProxyPowCapture(showAutoCaptcha, hideCaptcha)
 	}
 
@@ -322,7 +329,7 @@ func startLocked(configJSON string, tunFD int, withTunnel bool) error { //nolint
 		Observer:      observer{},
 		Solver:        solver,
 		PowCapture:    powCapture,
-		CaptchaActive: captchaActive.Load,
+		CaptchaActive: func() bool { return captchaActive.Load() || pendingManual.Load() > 0 },
 		Options: session.Options{
 			// Сеть и квота TURN восстанавливаются дольше 15 с; остановку решает пользователь.
 			Traffic: true,

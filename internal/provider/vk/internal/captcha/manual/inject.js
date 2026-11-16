@@ -2,7 +2,7 @@
     'use strict';
 
     const { local: LOCAL, upstream: UPSTREAM } = window.__ftpCaptcha ?? {};
-    const PROXY = '/generic_proxy?proxy_url=';
+    const PROXY = '/generic_proxy/';
     const RESULT = window.__ftpCaptcha?.resultPath;
     const POW_RESULT = window.__ftpCaptcha?.powPath;
     const CHECK = 'captchaNotRobot.check';
@@ -36,11 +36,16 @@
 
     function rewriteUrl(url) {
         if (!url || typeof url !== 'string') return url;
-        if (url.startsWith(LOCAL)) return url;
-        if (url.startsWith(UPSTREAM)) return LOCAL + url.slice(UPSTREAM.length);
-        if (url.startsWith('//')) return PROXY + encodeURIComponent(location.protocol + url);
-        if (url.startsWith('http://') || url.startsWith('https://')) return PROXY + encodeURIComponent(url);
-        return url;
+        if (!/^(https?:)?\/\//.test(url)) return url;
+        try {
+            const target = new URL(url, UPSTREAM);
+            if (target.origin === LOCAL) return url;
+            const resource = target.pathname + target.search + target.hash;
+            if (target.origin === UPSTREAM) return LOCAL + resource;
+            return PROXY + target.protocol.slice(0, -1) + '/' + target.host + resource;
+        } catch {
+            return url;
+        }
     }
 
     function rewriteAttr(el, attr) {
@@ -96,6 +101,7 @@
     }
 
     function showDone() {
+        window.__ftpCaptchaDone = true;
         document.body.style.background = '#000';
         document.body.innerHTML =
             '<div style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;font-family:ui-monospace,monospace;text-align:center">' +
