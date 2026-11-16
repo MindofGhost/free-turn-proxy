@@ -1,6 +1,6 @@
 services:
   free-turn-proxy:
-    image: ghcr.io/samosvalishe/free-turn-proxy:latest
+    image: registry.gitlab.com/freeturn/free-turn-proxy:latest
     # build: .
     network_mode: host
     restart: unless-stopped

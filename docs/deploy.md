@@ -3,7 +3,7 @@
 ## Установка скриптом (рекомендуется)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/samosvalishe/free-turn-proxy/master/scripts/install.sh | sudo bash
+curl -fsSL https://gitlab.com/freeturn/free-turn-proxy/-/raw/master/scripts/install.sh | sudo bash
 ```
 
 Мастер спросит:
@@ -27,7 +27,7 @@ freeturn client remove phone
 Без вопросов:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/samosvalishe/free-turn-proxy/master/scripts/install.sh | \
+curl -fsSL https://gitlab.com/freeturn/free-turn-proxy/-/raw/master/scripts/install.sh | \
   sudo bash -s -- -y --backend=new --method=docker
 ```
 
@@ -42,7 +42,7 @@ curl -fsSL https://raw.githubusercontent.com/samosvalishe/free-turn-proxy/master
 ```yaml
 services:
   free-turn-proxy:
-    image: ghcr.io/samosvalishe/free-turn-proxy:latest
+    image: registry.gitlab.com/freeturn/free-turn-proxy:latest
     network_mode: host
     restart: unless-stopped
     environment:
@@ -67,8 +67,10 @@ services:
 
 ```bash
 sudo mkdir -p /opt/free-turn-proxy
+# Актуальный тег смотрите на https://gitlab.com/freeturn/free-turn-proxy/-/releases
+# (пример для v4.0.1; install.sh резолвит latest сам через API).
 sudo curl -L -o /opt/free-turn-proxy/server \
-  https://github.com/samosvalishe/free-turn-proxy/releases/latest/download/server-linux-amd64
+  https://gitlab.com/freeturn/free-turn-proxy/-/releases/v4.0.1/downloads/server-linux-amd64
 sudo chmod +x /opt/free-turn-proxy/server
 ```
 
@@ -104,4 +106,4 @@ sudo CLIENTS_FILE=/opt/free-turn-proxy/clients.json \
 
 ## Порт
 
-Откройте внешний порт по **UDP** (при `MODE=tcp` тоже): `sudo ufw allow 56000/udp`. Скрипт делает это сам.
+Откройте внешний порт по **UDP** (при `MODE=tcp` тоже): `sudo ufw allow 56000/udp` (firewalld: `sudo firewall-cmd --permanent --add-port=56000/udp && sudo firewall-cmd --reload`). Скрипт делает это сам.

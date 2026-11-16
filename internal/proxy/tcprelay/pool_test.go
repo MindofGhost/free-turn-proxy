@@ -4,9 +4,9 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/xtaci/smux"
 	"github.com/samosvalishe/free-turn-proxy/internal/netconn"
 	"github.com/samosvalishe/free-turn-proxy/internal/transport/kcpmux"
-	"github.com/xtaci/smux"
 )
 
 // fakeSession - живая smux-сессия поверх пары в памяти; закрытие видно через IsClosed.

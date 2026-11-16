@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/samosvalishe/free-turn-proxy/internal/stats"
 	"github.com/xtaci/smux"
+	"github.com/samosvalishe/free-turn-proxy/internal/stats"
 )
 
 func tcpPair(t *testing.T) (*net.TCPConn, net.Conn) {

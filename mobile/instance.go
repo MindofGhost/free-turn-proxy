@@ -67,16 +67,23 @@ func (i *ProxyInstance) Start(configJSON string) error {
 	logger := &sinkLogger{debug: cfg.Log.Debug, buf: sharedLogBuf, sink: i.sink}
 	var captchaActive atomic.Bool
 	var solver vk.ManualSolverFunc
+	var powCapture vk.PowCaptureFunc
 	if i.sink != nil {
+		hide := func() { captchaActive.Store(false); i.sink.OnCaptcha("", false) }
 		solver = vk.ProxyManualSolver(
-			func(url string) { captchaActive.Store(true); i.sink.OnCaptcha(url) },
-			func() { captchaActive.Store(false); i.sink.OnCaptcha("") },
+			func(url string) { captchaActive.Store(true); i.sink.OnCaptcha(url, true) },
+			hide,
+		)
+		powCapture = vk.ProxyPowCapture(
+			func(url string) { captchaActive.Store(true); i.sink.OnCaptcha(url, false) },
+			hide,
 		)
 	}
 	sess, err := session.New(cfg, session.Deps{
 		Logger:        logger,
 		Observer:      instanceObserver{sink: i.sink},
 		Solver:        solver,
+		PowCapture:    powCapture,
 		CaptchaActive: captchaActive.Load,
 		StateDir:      i.stateDir,
 		SkipGlobalDNS: true,

@@ -9,12 +9,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/xtaci/smux"
 	"github.com/samosvalishe/free-turn-proxy/internal/logx"
 	"github.com/samosvalishe/free-turn-proxy/internal/netconn"
 	"github.com/samosvalishe/free-turn-proxy/internal/proxy/bond"
 	"github.com/samosvalishe/free-turn-proxy/internal/safego"
 	"github.com/samosvalishe/free-turn-proxy/internal/transport/kcpmux"
-	"github.com/xtaci/smux"
 )
 
 const backendDialTimeout = 10 * time.Second

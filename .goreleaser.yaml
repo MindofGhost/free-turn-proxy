@@ -97,10 +97,10 @@ checksum:
   name_template: checksums.txt
   # Mobile artifacts and install.sh ship via release.extra_files and are not build outputs;
   # list them here so hosts (Android Gradle fetch) can verify what they download.
+  # NOTE: iOS XCFramework dropped - no macOS runners on gitlab.com SaaS.
   extra_files:
     - glob: '{{ if not .IsSnapshot }}mobile-dist/freeturn.aar{{ end }}'
     - glob: '{{ if not .IsSnapshot }}mobile-dist/freeturn-sources.jar{{ end }}'
-    - glob: '{{ if not .IsSnapshot }}mobile-dist/Mobile.xcframework.zip{{ end }}'
     - glob: scripts/install.sh
 
 sboms:
@@ -110,7 +110,7 @@ snapshot:
   version_template: "{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}"
 
 changelog:
-  use: github
+  use: gitlab
   sort: asc
   groups:
     - title: "Breaking Changes"
@@ -145,10 +145,12 @@ release:
   mode: replace
   draft: false
   name_template: "{{ .ProjectName }} {{ .Version }}"
+  gitlab:
+    owner: freeturn
+    name: free-turn-proxy
   extra_files:
     - glob: '{{ if not .IsSnapshot }}mobile-dist/freeturn.aar{{ end }}'
     - glob: '{{ if not .IsSnapshot }}mobile-dist/freeturn-sources.jar{{ end }}'
-    - glob: '{{ if not .IsSnapshot }}mobile-dist/Mobile.xcframework.zip{{ end }}'
     # Android-приложение стримит этот скрипт по SSH: версия RPC = версия релиза.
     - glob: scripts/install.sh
 
@@ -158,7 +160,7 @@ dockers_v2:
       - server
     dockerfile: Dockerfile.goreleaser
     images:
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY }}"
+      - "registry.github.com/samosvalishe/free-turn-proxy"
     tags:
       - "{{ .Version }}"
       - '{{ if not .Prerelease }}latest{{ end }}'
@@ -166,7 +168,7 @@ dockers_v2:
       - linux/amd64
       - linux/arm64
     labels:
-      org.opencontainers.image.source: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
+      org.opencontainers.image.source: "https://github.com/samosvalishe/free-turn-proxy"
       org.opencontainers.image.version: "{{ .Version }}"
       org.opencontainers.image.revision: "{{ .FullCommit }}"
       org.opencontainers.image.created: "{{ .Date }}"

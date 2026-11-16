@@ -98,6 +98,7 @@ type Deps struct {
 	Logger        logx.Logger
 	Observer      Observer
 	Solver        vk.ManualSolverFunc
+	PowCapture    vk.PowCaptureFunc
 	CaptchaActive func() bool
 	StateDir      string
 	SkipGlobalDNS bool
