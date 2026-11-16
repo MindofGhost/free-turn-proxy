@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"gitlab.com/freeturn/free-turn-proxy/internal/uri"
+	"github.com/samosvalishe/free-turn-proxy/internal/uri"
 )
 
 // ClientJSON - JSON-схема конфигурации клиента (gomobile).

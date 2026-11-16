@@ -11,10 +11,10 @@ import (
 
 	"github.com/pion/stun/v3"
 	"github.com/pion/turn/v5"
-	"gitlab.com/freeturn/free-turn-proxy/internal/logx"
-	"gitlab.com/freeturn/free-turn-proxy/internal/netconn"
-	"gitlab.com/freeturn/free-turn-proxy/internal/netctl"
-	"gitlab.com/freeturn/free-turn-proxy/internal/randx"
+	"github.com/samosvalishe/free-turn-proxy/internal/logx"
+	"github.com/samosvalishe/free-turn-proxy/internal/netconn"
+	"github.com/samosvalishe/free-turn-proxy/internal/netctl"
+	"github.com/samosvalishe/free-turn-proxy/internal/randx"
 )
 
 // ErrAllocQuota - TURN-код 486: реквизиты валидны, но по ним уже висит предельное число

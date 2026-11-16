@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"gitlab.com/freeturn/free-turn-proxy/internal/uri"
+	"github.com/samosvalishe/free-turn-proxy/internal/uri"
 )
 
 func TestParse(t *testing.T) {

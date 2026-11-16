@@ -8,7 +8,7 @@ import (
 	"net"
 	"sync"
 
-	"gitlab.com/freeturn/free-turn-proxy/internal/stats"
+	"github.com/samosvalishe/free-turn-proxy/internal/stats"
 )
 
 // Copy владеет local и lanes; ошибка любого направления закрывает всё соединение.

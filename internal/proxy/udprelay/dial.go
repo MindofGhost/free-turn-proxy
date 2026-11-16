@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"net"
 
-	"gitlab.com/freeturn/free-turn-proxy/internal/logx"
-	"gitlab.com/freeturn/free-turn-proxy/internal/transport/turndial"
+	"github.com/samosvalishe/free-turn-proxy/internal/logx"
+	"github.com/samosvalishe/free-turn-proxy/internal/transport/turndial"
 )
 
 type DialFunc func(ctx context.Context, streamID int) (*turndial.Stream, error)

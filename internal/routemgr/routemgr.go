@@ -4,7 +4,7 @@ import (
 	"net"
 	"sync"
 
-	"gitlab.com/freeturn/free-turn-proxy/internal/logx"
+	"github.com/samosvalishe/free-turn-proxy/internal/logx"
 )
 
 type Manager struct {

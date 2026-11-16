@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"sync"
 
-	"gitlab.com/freeturn/free-turn-proxy/internal/statedir"
+	"github.com/samosvalishe/free-turn-proxy/internal/statedir"
 )
 
 // PersonaStateFile - имя файла с поколением персоны рядом с client_config.json.

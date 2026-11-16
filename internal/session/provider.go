@@ -6,14 +6,14 @@ import (
 	"net"
 	"sync/atomic"
 
-	"gitlab.com/freeturn/free-turn-proxy/internal/config"
-	"gitlab.com/freeturn/free-turn-proxy/internal/logx"
-	"gitlab.com/freeturn/free-turn-proxy/internal/provider"
-	"gitlab.com/freeturn/free-turn-proxy/internal/provider/multi"
-	"gitlab.com/freeturn/free-turn-proxy/internal/provider/vk"
-	"gitlab.com/freeturn/free-turn-proxy/internal/proxy/allocpace"
-	"gitlab.com/freeturn/free-turn-proxy/internal/proxy/udprelay"
-	"gitlab.com/freeturn/free-turn-proxy/internal/transport/turndial"
+	"github.com/samosvalishe/free-turn-proxy/internal/config"
+	"github.com/samosvalishe/free-turn-proxy/internal/logx"
+	"github.com/samosvalishe/free-turn-proxy/internal/provider"
+	"github.com/samosvalishe/free-turn-proxy/internal/provider/multi"
+	"github.com/samosvalishe/free-turn-proxy/internal/provider/vk"
+	"github.com/samosvalishe/free-turn-proxy/internal/proxy/allocpace"
+	"github.com/samosvalishe/free-turn-proxy/internal/proxy/udprelay"
+	"github.com/samosvalishe/free-turn-proxy/internal/transport/turndial"
 )
 
 func (s *Session) link(dialer net.Dialer, peer *net.UDPAddr) (udprelay.AuthHandler, udprelay.DialFunc, error) {

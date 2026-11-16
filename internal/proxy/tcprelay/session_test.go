@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"gitlab.com/freeturn/free-turn-proxy/internal/logx"
-	"gitlab.com/freeturn/free-turn-proxy/internal/provider"
-	"gitlab.com/freeturn/free-turn-proxy/internal/stats"
-	"gitlab.com/freeturn/free-turn-proxy/internal/transport/turndial"
+	"github.com/samosvalishe/free-turn-proxy/internal/logx"
+	"github.com/samosvalishe/free-turn-proxy/internal/provider"
+	"github.com/samosvalishe/free-turn-proxy/internal/stats"
+	"github.com/samosvalishe/free-turn-proxy/internal/transport/turndial"
 )
 
 type fakeAuth struct {

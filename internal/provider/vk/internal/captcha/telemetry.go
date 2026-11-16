@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"gitlab.com/freeturn/free-turn-proxy/internal/randx"
+	"github.com/samosvalishe/free-turn-proxy/internal/randx"
 )
 
 const (

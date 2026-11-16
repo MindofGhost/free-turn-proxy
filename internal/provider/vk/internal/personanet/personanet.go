@@ -14,8 +14,8 @@ import (
 	tlsclient "github.com/bogdanfinn/tls-client"
 	"golang.org/x/net/proxy"
 
-	"gitlab.com/freeturn/free-turn-proxy/internal/netconn"
-	"gitlab.com/freeturn/free-turn-proxy/internal/provider/vk/internal/browserprofile"
+	"github.com/samosvalishe/free-turn-proxy/internal/netconn"
+	"github.com/samosvalishe/free-turn-proxy/internal/provider/vk/internal/browserprofile"
 )
 
 const (

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"gitlab.com/freeturn/free-turn-proxy/internal/uri"
+	"github.com/samosvalishe/free-turn-proxy/internal/uri"
 )
 
 func TestBondConfigRoundTrip(t *testing.T) {

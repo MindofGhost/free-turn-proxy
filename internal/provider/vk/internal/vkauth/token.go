@@ -5,7 +5,7 @@ import (
 	"fmt"
 	neturl "net/url"
 
-	"gitlab.com/freeturn/free-turn-proxy/internal/provider/vk/internal/namegen"
+	"github.com/samosvalishe/free-turn-proxy/internal/provider/vk/internal/namegen"
 
 	tlsclient "github.com/bogdanfinn/tls-client"
 )

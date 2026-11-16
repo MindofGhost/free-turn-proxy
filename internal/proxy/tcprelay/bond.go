@@ -7,9 +7,9 @@ import (
 	"net"
 	"time"
 
-	"gitlab.com/freeturn/free-turn-proxy/internal/logx"
-	"gitlab.com/freeturn/free-turn-proxy/internal/proxy/bond"
-	"gitlab.com/freeturn/free-turn-proxy/internal/stats"
+	"github.com/samosvalishe/free-turn-proxy/internal/logx"
+	"github.com/samosvalishe/free-turn-proxy/internal/proxy/bond"
+	"github.com/samosvalishe/free-turn-proxy/internal/stats"
 )
 
 func proxyBond(ctx context.Context, log logx.Logger, conn net.Conn, pool *sessionPool) {

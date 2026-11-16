@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"gitlab.com/freeturn/free-turn-proxy/internal/stats"
+	"github.com/samosvalishe/free-turn-proxy/internal/stats"
 )
 
 // traffic агрегирует счётчики и считает скорость передачи.

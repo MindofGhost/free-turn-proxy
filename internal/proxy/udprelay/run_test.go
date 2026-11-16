@@ -9,12 +9,12 @@ import (
 	"testing"
 	"time"
 
-	"gitlab.com/freeturn/free-turn-proxy/internal/logx"
-	"gitlab.com/freeturn/free-turn-proxy/internal/netconn"
-	"gitlab.com/freeturn/free-turn-proxy/internal/provider"
-	"gitlab.com/freeturn/free-turn-proxy/internal/safego"
-	"gitlab.com/freeturn/free-turn-proxy/internal/transport/dtlsdial"
-	"gitlab.com/freeturn/free-turn-proxy/internal/transport/turndial"
+	"github.com/samosvalishe/free-turn-proxy/internal/logx"
+	"github.com/samosvalishe/free-turn-proxy/internal/netconn"
+	"github.com/samosvalishe/free-turn-proxy/internal/provider"
+	"github.com/samosvalishe/free-turn-proxy/internal/safego"
+	"github.com/samosvalishe/free-turn-proxy/internal/transport/dtlsdial"
+	"github.com/samosvalishe/free-turn-proxy/internal/transport/turndial"
 )
 
 type deadlineRecorder struct {

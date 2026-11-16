@@ -6,9 +6,9 @@ import (
 	"net"
 	"time"
 
-	"gitlab.com/freeturn/free-turn-proxy/internal/provider/vk/internal/browserprofile"
-	"gitlab.com/freeturn/free-turn-proxy/internal/provider/vk/internal/captcha"
-	"gitlab.com/freeturn/free-turn-proxy/internal/provider/vk/internal/captcha/manual"
+	"github.com/samosvalishe/free-turn-proxy/internal/provider/vk/internal/browserprofile"
+	"github.com/samosvalishe/free-turn-proxy/internal/provider/vk/internal/captcha"
+	"github.com/samosvalishe/free-turn-proxy/internal/provider/vk/internal/captcha/manual"
 
 	tlsclient "github.com/bogdanfinn/tls-client"
 )

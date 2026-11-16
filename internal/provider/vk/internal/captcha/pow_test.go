@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"gitlab.com/freeturn/free-turn-proxy/internal/provider/vk/internal/browserprofile"
+	"github.com/samosvalishe/free-turn-proxy/internal/provider/vk/internal/browserprofile"
 )
 
 // Живая страница captcha, снятая целиком: PoW-скрипт обфусцирован, поэтому

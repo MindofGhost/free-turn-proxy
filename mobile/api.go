@@ -11,15 +11,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	"gitlab.com/freeturn/free-turn-proxy/internal/client/dnsdial"
-	"gitlab.com/freeturn/free-turn-proxy/internal/config"
-	"gitlab.com/freeturn/free-turn-proxy/internal/provider/vk"
-	"gitlab.com/freeturn/free-turn-proxy/internal/safego"
-	"gitlab.com/freeturn/free-turn-proxy/internal/session"
-	"gitlab.com/freeturn/free-turn-proxy/internal/statedir"
-	"gitlab.com/freeturn/free-turn-proxy/internal/sub"
-	"gitlab.com/freeturn/free-turn-proxy/internal/tunnel"
-	"gitlab.com/freeturn/free-turn-proxy/internal/tunnel/awg"
+	"github.com/samosvalishe/free-turn-proxy/internal/client/dnsdial"
+	"github.com/samosvalishe/free-turn-proxy/internal/config"
+	"github.com/samosvalishe/free-turn-proxy/internal/provider/vk"
+	"github.com/samosvalishe/free-turn-proxy/internal/safego"
+	"github.com/samosvalishe/free-turn-proxy/internal/session"
+	"github.com/samosvalishe/free-turn-proxy/internal/statedir"
+	"github.com/samosvalishe/free-turn-proxy/internal/sub"
+	"github.com/samosvalishe/free-turn-proxy/internal/tunnel"
+	"github.com/samosvalishe/free-turn-proxy/internal/tunnel/awg"
 )
 
 // Состояния подключения (session.Phase*).

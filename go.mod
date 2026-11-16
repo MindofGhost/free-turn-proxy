@@ -1,4 +1,4 @@
-module gitlab.com/freeturn/free-turn-proxy
+module github.com/samosvalishe/free-turn-proxy
 
 go 1.26.11
 

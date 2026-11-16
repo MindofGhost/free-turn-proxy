@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/xtaci/smux"
-	"gitlab.com/freeturn/free-turn-proxy/internal/netconn"
-	"gitlab.com/freeturn/free-turn-proxy/internal/transport/kcpmux"
+	"github.com/samosvalishe/free-turn-proxy/internal/netconn"
+	"github.com/samosvalishe/free-turn-proxy/internal/transport/kcpmux"
 )
 
 // fakeSession - живая smux-сессия поверх пары в памяти; закрытие видно через IsClosed.

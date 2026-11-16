@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/xtaci/smux"
-	"gitlab.com/freeturn/free-turn-proxy/internal/logx"
-	"gitlab.com/freeturn/free-turn-proxy/internal/netconn"
-	"gitlab.com/freeturn/free-turn-proxy/internal/transport/kcpmux"
+	"github.com/samosvalishe/free-turn-proxy/internal/logx"
+	"github.com/samosvalishe/free-turn-proxy/internal/netconn"
+	"github.com/samosvalishe/free-turn-proxy/internal/transport/kcpmux"
 )
 
 // echoBackend отвечает тем же, что получил, - роль локального Xray на сервере.

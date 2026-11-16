@@ -9,13 +9,13 @@ import (
 	"strings"
 	"time"
 
-	"gitlab.com/freeturn/free-turn-proxy/internal/config"
-	"gitlab.com/freeturn/free-turn-proxy/internal/logx"
-	"gitlab.com/freeturn/free-turn-proxy/internal/netconn"
-	"gitlab.com/freeturn/free-turn-proxy/internal/tunnel"
-	"gitlab.com/freeturn/free-turn-proxy/internal/tunnel/awg"
-	"gitlab.com/freeturn/free-turn-proxy/internal/tunnel/bind"
-	"gitlab.com/freeturn/free-turn-proxy/internal/tunnel/wgconf"
+	"github.com/samosvalishe/free-turn-proxy/internal/config"
+	"github.com/samosvalishe/free-turn-proxy/internal/logx"
+	"github.com/samosvalishe/free-turn-proxy/internal/netconn"
+	"github.com/samosvalishe/free-turn-proxy/internal/tunnel"
+	"github.com/samosvalishe/free-turn-proxy/internal/tunnel/awg"
+	"github.com/samosvalishe/free-turn-proxy/internal/tunnel/bind"
+	"github.com/samosvalishe/free-turn-proxy/internal/tunnel/wgconf"
 )
 
 // TunnelSnapshot - срез состояния userspace-туннеля.

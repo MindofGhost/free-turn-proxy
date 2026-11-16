@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 
 	"github.com/xtaci/smux"
-	"gitlab.com/freeturn/free-turn-proxy/internal/stats"
+	"github.com/samosvalishe/free-turn-proxy/internal/stats"
 )
 
 // pooledSession - одна сессия TURN+DTLS+KCP+smux.
